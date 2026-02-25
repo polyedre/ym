@@ -7,7 +7,7 @@ use std::process;
 mod cli;
 mod yaml_ops;
 
-use cli::{parse_args, Command};
+use cli::{parse_cli, Command};
 
 fn get_terminal_width() -> usize {
     // Try to get terminal width from multiple sources
@@ -29,18 +29,7 @@ fn get_terminal_width() -> usize {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
-        eprintln!("Usage: ym <command> [args...]");
-        eprintln!("Commands:");
-        eprintln!("  grep [-R] <pattern> [FILE [FILE ...]]  - Search YAML keys by regex pattern (reads stdin if no files)");
-        eprintln!("  set <file> <key=value>...              - Set YAML values at key paths");
-        eprintln!("  unset <file> <key>...                  - Remove keys from YAML");
-        process::exit(1);
-    }
-
-    let command = match parse_args(&args[1..]) {
+    let command = match parse_cli() {
         Ok(cmd) => cmd,
         Err(e) => {
             eprintln!("Error: {}", e);
