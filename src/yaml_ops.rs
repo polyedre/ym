@@ -37,8 +37,11 @@ fn collect_matching_keys(
                 }
             }
         }
-        Value::Sequence(_) => {
-            // For MVP, treat sequences as-is without special handling
+        Value::Sequence(seq) => {
+            for (idx, val) in seq.iter().enumerate() {
+                let new_path = format!("{}[{}]", current_path, idx);
+                collect_matching_keys(val, pattern, &new_path, results)?;
+            }
         }
         _ => {}
     }
