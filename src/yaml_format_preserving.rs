@@ -16,7 +16,7 @@ pub fn write_yaml_preserving_format(
 
     // Check if there are unhandleable structural changes
     // If we're adding new nested structures, fall back to standard serialization
-    if has_unhandleable_nested_changes(&original_value, &updated_value) {
+    if has_unhandleable_nested_changes(&original_value, updated_value) {
         // For truly complex nested changes, use standard YAML serialization
         return serde_yaml::to_string(updated_value)
             .map_err(|e| format!("Failed to serialize YAML: {}", e));
@@ -24,10 +24,10 @@ pub fn write_yaml_preserving_format(
 
     // Collect keys that were removed (in original but not in updated)
     let mut removed_keys = Vec::new();
-    collect_removed_keys(&original_value, &updated_value, "", &mut removed_keys);
+    collect_removed_keys(&original_value, updated_value, "", &mut removed_keys);
 
     // Build a map of all keys and their new values
-    let updates = collect_all_changes(original_content, &updated_value)?;
+    let updates = collect_all_changes(original_content, updated_value)?;
 
     if updates.is_empty() && removed_keys.is_empty() {
         // No changes, return original
@@ -109,10 +109,11 @@ fn has_unhandleable_nested_changes(old: &Value, new: &Value) -> bool {
                 if let Some(new_val) = new_map.get(key) {
                     if old_val != new_val {
                         // If both are mappings and contents changed, we need to be careful
-                        if old_val.is_mapping() && new_val.is_mapping() {
-                            if has_unhandleable_nested_changes(old_val, new_val) {
-                                return true;
-                            }
+                        if old_val.is_mapping()
+                            && new_val.is_mapping()
+                            && has_unhandleable_nested_changes(old_val, new_val)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -126,29 +127,26 @@ fn has_unhandleable_nested_changes(old: &Value, new: &Value) -> bool {
 
 /// Collects keys that were removed (in original but not in updated), including nested keys
 fn collect_removed_keys(old: &Value, new: &Value, prefix: &str, removed: &mut Vec<String>) {
-    match (old, new) {
-        (Value::Mapping(old_map), Value::Mapping(new_map)) => {
-            for (key, old_val) in old_map {
-                if let Value::String(key_str) = key {
-                    let full_key = if prefix.is_empty() {
-                        key_str.clone()
-                    } else {
-                        format!("{}.{}", prefix, key_str)
-                    };
+    if let (Value::Mapping(old_map), Value::Mapping(new_map)) = (old, new) {
+        for (key, old_val) in old_map {
+            if let Value::String(key_str) = key {
+                let full_key = if prefix.is_empty() {
+                    key_str.clone()
+                } else {
+                    format!("{}.{}", prefix, key_str)
+                };
 
-                    if !new_map.contains_key(key) {
-                        // Key was removed entirely
-                        removed.push(full_key);
-                    } else if let Some(new_val) = new_map.get(key) {
-                        // Key exists in new, but might have removed nested keys
-                        if old_val.is_mapping() && new_val.is_mapping() {
-                            collect_removed_keys(old_val, new_val, &full_key, removed);
-                        }
+                if !new_map.contains_key(key) {
+                    // Key was removed entirely
+                    removed.push(full_key);
+                } else if let Some(new_val) = new_map.get(key) {
+                    // Key exists in new, but might have removed nested keys
+                    if old_val.is_mapping() && new_val.is_mapping() {
+                        collect_removed_keys(old_val, new_val, &full_key, removed);
                     }
                 }
             }
         }
-        _ => {}
     }
 }
 
