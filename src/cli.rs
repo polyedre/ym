@@ -16,6 +16,12 @@ pub enum Command {
         file: String,
         keys: Vec<String>,
     },
+    Cp {
+        source_file: String,
+        source_key: String,
+        dest_file: Option<String>,
+        dest_key: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -60,6 +66,15 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         keys: Vec<String>,
     },
+    /// Copy a value from one key to another (same or different file)
+    Cp {
+        /// Source file and key in format: file.yaml:key.path
+        source: String,
+
+        /// Destination file and key in format: file.yaml:key.path (optional)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        destination: Vec<String>,
+    },
 }
 
 pub fn parse_cli() -> Result<Command, String> {
@@ -102,6 +117,87 @@ pub fn parse_cli() -> Result<Command, String> {
 
             Ok(Command::Unset { file, keys })
         }
+        Commands::Cp {
+            source,
+            destination,
+        } => {
+            // Parse source as file:key
+            let (source_file, source_key) = parse_file_key_pair(&source)?;
+
+            // Parse destination if provided
+            let (dest_file, dest_key) = if destination.is_empty() {
+                // No destination provided: error if neither file nor key changes
+                (None, None)
+            } else if destination.len() == 1 {
+                // Single destination argument
+                parse_optional_file_key_pair(&destination[0])?
+            } else {
+                return Err("cp accepts at most one destination argument".to_string());
+            };
+
+            // Validate that at least one of dest_file or dest_key is provided
+            if dest_file.is_none() && dest_key.is_none() {
+                return Err(
+                    "destination file and destination key cannot both be omitted".to_string(),
+                );
+            }
+
+            Ok(Command::Cp {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            })
+        }
+    }
+}
+
+/// Parse a required file:key pair
+fn parse_file_key_pair(input: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = input.splitn(2, ':').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return Err(format!(
+            "Invalid file:key pair: {} (expected format: file.yaml:key.path)",
+            input
+        ));
+    }
+    Ok((parts[0].to_string(), parts[1].to_string()))
+}
+
+/// Parse an optional file:key pair. Returns (None, None) if input is just a key (no colon),
+/// or (Some(file), Some(key)) if both are provided.
+/// If the input has a colon, file and key can be filled independently (at least one must be non-empty).
+fn parse_optional_file_key_pair(input: &str) -> Result<(Option<String>, Option<String>), String> {
+    if let Some(colon_pos) = input.find(':') {
+        let file = &input[..colon_pos];
+        let key = &input[colon_pos + 1..];
+
+        // Ensure at least file or key is non-empty, and neither is exactly "invalid:invalid:too:many" pattern
+        if file.is_empty() && key.is_empty() {
+            return Err(format!(
+                "Invalid file:key pair: {} (file and key cannot both be empty)",
+                input
+            ));
+        }
+
+        Ok((
+            if file.is_empty() {
+                None
+            } else {
+                Some(file.to_string())
+            },
+            if key.is_empty() {
+                None
+            } else {
+                Some(key.to_string())
+            },
+        ))
+    } else {
+        // No colon: treat entire input as key
+        if input.is_empty() {
+            return Err("Key cannot be empty".to_string());
+        }
+        Ok((None, Some(input.to_string())))
     }
 }
 
@@ -151,6 +247,32 @@ mod tests {
                 }
 
                 Ok(Command::Unset { file, keys })
+            }
+            Commands::Cp {
+                source,
+                destination,
+            } => {
+                let (source_file, source_key) = parse_file_key_pair(&source)?;
+                let (dest_file, dest_key) = if destination.is_empty() {
+                    (None, None)
+                } else if destination.len() == 1 {
+                    parse_optional_file_key_pair(&destination[0])?
+                } else {
+                    return Err("cp accepts at most one destination argument".to_string());
+                };
+
+                if dest_file.is_none() && dest_key.is_none() {
+                    return Err(
+                        "destination file and destination key cannot both be omitted".to_string(),
+                    );
+                }
+
+                Ok(Command::Cp {
+                    source_file,
+                    source_key,
+                    dest_file,
+                    dest_key,
+                })
             }
         }
     }
@@ -409,5 +531,132 @@ mod tests {
     fn test_parse_unset_no_keys_error() {
         let result = test_with_args(vec!["ym", "unset", "file.yaml"]);
         assert!(result.is_err());
+    }
+
+    // ==================== cp Tests ====================
+
+    #[test]
+    fn test_parse_cp_same_file_same_key() {
+        // Error: both destination file and key omitted
+        let result = test_with_args(vec!["ym", "cp", "file.yaml:source.key"]);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("destination file and destination key cannot both be omitted"));
+    }
+
+    #[test]
+    fn test_parse_cp_same_file_different_key() {
+        let cmd = test_with_args(vec!["ym", "cp", "file.yaml:source.key", "dest.key"]).unwrap();
+
+        match cmd {
+            Command::Cp {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "file.yaml");
+                assert_eq!(source_key, "source.key");
+                assert_eq!(dest_file, None);
+                assert_eq!(dest_key, Some("dest.key".to_string()));
+            }
+            _ => panic!("Expected Cp command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_cp_different_file_same_key() {
+        let cmd = test_with_args(vec!["ym", "cp", "source.yaml:mykey", "dest.yaml:mykey"]).unwrap();
+
+        match cmd {
+            Command::Cp {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "source.yaml");
+                assert_eq!(source_key, "mykey");
+                assert_eq!(dest_file, Some("dest.yaml".to_string()));
+                assert_eq!(dest_key, Some("mykey".to_string()));
+            }
+            _ => panic!("Expected Cp command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_cp_different_file_different_key() {
+        let cmd = test_with_args(vec![
+            "ym",
+            "cp",
+            "source.yaml:source.key",
+            "dest.yaml:dest.key",
+        ])
+        .unwrap();
+
+        match cmd {
+            Command::Cp {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "source.yaml");
+                assert_eq!(source_key, "source.key");
+                assert_eq!(dest_file, Some("dest.yaml".to_string()));
+                assert_eq!(dest_key, Some("dest.key".to_string()));
+            }
+            _ => panic!("Expected Cp command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_cp_only_destination_file() {
+        let cmd = test_with_args(vec!["ym", "cp", "source.yaml:mykey", "dest.yaml:"]).unwrap();
+
+        match cmd {
+            Command::Cp {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "source.yaml");
+                assert_eq!(source_key, "mykey");
+                assert_eq!(dest_file, Some("dest.yaml".to_string()));
+                assert_eq!(dest_key, None);
+            }
+            _ => panic!("Expected Cp command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_cp_missing_source_key() {
+        let result = test_with_args(vec!["ym", "cp", "source.yaml", "dest.key"]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid file:key pair"));
+    }
+
+    #[test]
+    fn test_parse_cp_invalid_source_format() {
+        let result = test_with_args(vec!["ym", "cp", "invalid", "dest.key"]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid file:key pair"));
+    }
+
+    #[test]
+    fn test_parse_cp_too_many_arguments() {
+        let result = test_with_args(vec![
+            "ym",
+            "cp",
+            "source.yaml:key",
+            "dest1.yaml:key",
+            "dest2.yaml:key",
+        ]);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("cp accepts at most one destination argument"));
     }
 }

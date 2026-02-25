@@ -103,6 +103,110 @@ pub fn unset_values(value: &mut Value, keys: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Get a value from YAML at a specified key path
+pub fn get_value(value: &Value, path: &str) -> Result<Option<Value>, String> {
+    let parts: Vec<&str> = path.split('.').collect();
+
+    if parts.is_empty() {
+        return Err("Empty key path".to_string());
+    }
+
+    let mut current = value;
+    for part in parts {
+        if let Value::Mapping(map) = current {
+            match map.get(&Value::String(part.to_string())) {
+                Some(next) => current = next,
+                None => return Ok(None),
+            }
+        } else {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(current.clone()))
+}
+
+/// Copy a value from source file:key to destination file:key
+/// Source and destination keys are required
+/// If dest_file is None, use source_file
+/// If dest_key is None, use source_key
+pub fn copy_value(
+    source_file: &str,
+    source_key: &str,
+    dest_file: &str,
+    dest_key: &str,
+) -> Result<(), String> {
+    use std::fs;
+
+    // Read source file
+    let source_contents = fs::read_to_string(source_file)
+        .map_err(|e| format!("Failed to read source file '{}': {}", source_file, e))?;
+
+    let source_yaml = serde_yaml::from_str(&source_contents)
+        .map_err(|e| format!("Failed to parse YAML from '{}': {}", source_file, e))?;
+
+    // Get the value from source
+    let value = get_value(&source_yaml, source_key)?
+        .ok_or_else(|| format!("Key '{}' not found in '{}'", source_key, source_file))?;
+
+    // Read destination file (or create if it doesn't exist)
+    let mut dest_yaml = if std::path::Path::new(dest_file).exists() {
+        let dest_contents = fs::read_to_string(dest_file)
+            .map_err(|e| format!("Failed to read destination file '{}': {}", dest_file, e))?;
+
+        serde_yaml::from_str(&dest_contents)
+            .map_err(|e| format!("Failed to parse YAML from '{}': {}", dest_file, e))?
+    } else {
+        Value::Mapping(Default::default())
+    };
+
+    // Set the value at destination
+    set_value(&mut dest_yaml, dest_key, &value)?;
+
+    // Write destination file
+    let dest_yaml_str = serde_yaml::to_string(&dest_yaml)
+        .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+
+    fs::write(dest_file, dest_yaml_str)
+        .map_err(|e| format!("Failed to write to '{}': {}", dest_file, e))?;
+
+    Ok(())
+}
+
+/// Set a value in YAML at a specified key path to a specific Value
+fn set_value(value: &mut Value, path: &str, new_value: &Value) -> Result<(), String> {
+    let parts: Vec<&str> = path.split('.').collect();
+
+    if parts.is_empty() {
+        return Err("Empty key path".to_string());
+    }
+
+    // Ensure root is a mapping
+    if !matches!(value, Value::Mapping(_)) {
+        *value = Value::Mapping(Default::default());
+    }
+
+    // Navigate/create the path
+    let mut current = value;
+    for (i, &part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            // Last part: set the value
+            if let Value::Mapping(ref mut map) = current {
+                map.insert(Value::String(part.to_string()), new_value.clone());
+            }
+        } else {
+            // Intermediate part: navigate or create
+            if let Value::Mapping(ref mut map) = current {
+                current = map
+                    .entry(Value::String(part.to_string()))
+                    .or_insert_with(|| Value::Mapping(Default::default()));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn unset_at_path(value: &mut Value, path: &str) -> Result<(), String> {
     let parts: Vec<&str> = path.split('.').collect();
 
@@ -541,5 +645,166 @@ database:
         let value = parse_yaml("- item1\n- item2\n- item3");
         let result = format_result("items", &value, 80);
         assert!(result.contains("items:"));
+    }
+
+    // ==================== get_value() Tests ====================
+
+    #[test]
+    fn test_get_value_simple_key() {
+        let yaml = parse_yaml("name: Alice\nage: 30");
+        let result = get_value(&yaml, "name").unwrap();
+        assert_eq!(result.unwrap().as_str().unwrap(), "Alice");
+    }
+
+    #[test]
+    fn test_get_value_nested_key() {
+        let yaml = parse_yaml("database:\n  host: localhost\n  port: 5432");
+        let result = get_value(&yaml, "database.host").unwrap();
+        assert_eq!(result.unwrap().as_str().unwrap(), "localhost");
+    }
+
+    #[test]
+    fn test_get_value_nonexistent_key() {
+        let yaml = parse_yaml("name: Alice");
+        let result = get_value(&yaml, "nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_value_nonexistent_nested_path() {
+        let yaml = parse_yaml("database:\n  host: localhost");
+        let result = get_value(&yaml, "database.nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_value_mapping() {
+        let yaml = parse_yaml("database:\n  host: localhost\n  port: 5432");
+        let result = get_value(&yaml, "database").unwrap();
+        assert!(result.unwrap().is_mapping());
+    }
+
+    #[test]
+    fn test_get_value_number() {
+        let yaml = parse_yaml("age: 30\nheight: 180");
+        let result = get_value(&yaml, "age").unwrap();
+        assert_eq!(result.unwrap().as_i64().unwrap(), 30);
+    }
+
+    // ==================== copy_value() Tests ====================
+
+    #[test]
+    fn test_copy_value_same_file_simple() {
+        use std::fs;
+
+        let test_dir = "test_copy_same_file";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let test_file = format!("{}/test.yaml", test_dir);
+        fs::write(
+            &test_file,
+            "source:\n  key: value123\ndest:\n  key: old_value",
+        )
+        .unwrap();
+
+        copy_value(&test_file, "source.key", &test_file, "dest.key").unwrap();
+
+        let contents = fs::read_to_string(&test_file).unwrap();
+        let yaml = serde_yaml::from_str::<Value>(&contents).unwrap();
+        assert_eq!(yaml["dest"]["key"].as_str().unwrap(), "value123");
+        assert_eq!(yaml["source"]["key"].as_str().unwrap(), "value123");
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_value_different_files() {
+        use std::fs;
+
+        let test_dir = "test_copy_diff_files";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let source_file = format!("{}/source.yaml", test_dir);
+        let dest_file = format!("{}/dest.yaml", test_dir);
+
+        fs::write(&source_file, "data:\n  value: test123").unwrap();
+        fs::write(&dest_file, "other: value").unwrap();
+
+        copy_value(&source_file, "data.value", &dest_file, "copied.value").unwrap();
+
+        let dest_contents = fs::read_to_string(&dest_file).unwrap();
+        let yaml = serde_yaml::from_str::<Value>(&dest_contents).unwrap();
+        assert_eq!(yaml["copied"]["value"].as_str().unwrap(), "test123");
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_value_to_nonexistent_file() {
+        use std::fs;
+
+        let test_dir = "test_copy_to_new";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let source_file = format!("{}/source.yaml", test_dir);
+        let dest_file = format!("{}/dest.yaml", test_dir);
+
+        fs::write(&source_file, "data: value456").unwrap();
+
+        copy_value(&source_file, "data", &dest_file, "new_key").unwrap();
+
+        assert!(std::path::Path::new(&dest_file).exists());
+        let dest_contents = fs::read_to_string(&dest_file).unwrap();
+        let yaml = serde_yaml::from_str::<Value>(&dest_contents).unwrap();
+        assert_eq!(yaml["new_key"].as_str().unwrap(), "value456");
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_value_complex_type() {
+        use std::fs;
+
+        let test_dir = "test_copy_complex";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let test_file = format!("{}/test.yaml", test_dir);
+        fs::write(
+            &test_file,
+            "config:\n  nested:\n    value: test\n    count: 42",
+        )
+        .unwrap();
+
+        copy_value(&test_file, "config.nested", &test_file, "backup.config").unwrap();
+
+        let contents = fs::read_to_string(&test_file).unwrap();
+        let yaml = serde_yaml::from_str::<Value>(&contents).unwrap();
+        assert!(yaml["backup"]["config"].is_mapping());
+        assert_eq!(yaml["backup"]["config"]["value"].as_str().unwrap(), "test");
+        assert_eq!(yaml["backup"]["config"]["count"].as_i64().unwrap(), 42);
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_copy_value_nonexistent_source_key() {
+        use std::fs;
+
+        let test_dir = "test_copy_nonexistent";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let test_file = format!("{}/test.yaml", test_dir);
+        fs::write(&test_file, "data: value").unwrap();
+
+        let result = copy_value(&test_file, "nonexistent", &test_file, "dest");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+
+        fs::remove_dir_all(test_dir).unwrap();
     }
 }
