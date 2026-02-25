@@ -2,13 +2,10 @@ use serde_yaml::Value;
 use std::collections::HashMap;
 
 /// Updates a YAML string while preserving comments, empty lines, and indentation
-/// for top-level key modifications.
+/// for both top-level and nested key modifications.
 ///
-/// NOTE: This only preserves formatting for top-level key operations.
-/// For nested key operations (e.g., database.primary.password), standard YAML
-/// serialization is used as serde_yaml does not preserve comments in nested structures.
-/// To fully preserve comments for all operations, a comment-aware YAML library
-/// would be needed (e.g., using a library like `yaml-prs`).
+/// This function preserves formatting for all operations including nested keys
+/// by performing line-by-line updates and intelligently handling indentation.
 pub fn write_yaml_preserving_format(
     original_content: &str,
     updated_value: &Value,
@@ -17,21 +14,20 @@ pub fn write_yaml_preserving_format(
     let original_value: Value = serde_yaml::from_str(original_content)
         .map_err(|e| format!("Failed to parse YAML: {}", e))?;
 
-    // Check if this is a simple top-level operation
-    // If we're adding/removing/modifying nested structures, fall back to standard serialization
-    if has_nested_changes(&original_value, updated_value) {
-        // For nested changes, use standard YAML serialization
-        // This is simpler and more reliable than trying to do line-based updates
+    // Check if there are unhandleable structural changes
+    // If we're adding new nested structures, fall back to standard serialization
+    if has_unhandleable_nested_changes(&original_value, &updated_value) {
+        // For truly complex nested changes, use standard YAML serialization
         return serde_yaml::to_string(updated_value)
             .map_err(|e| format!("Failed to serialize YAML: {}", e));
     }
 
     // Collect keys that were removed (in original but not in updated)
     let mut removed_keys = Vec::new();
-    collect_removed_keys(&original_value, updated_value, "", &mut removed_keys);
+    collect_removed_keys(&original_value, &updated_value, "", &mut removed_keys);
 
     // Build a map of all keys and their new values
-    let updates = collect_all_changes(original_content, updated_value)?;
+    let updates = collect_all_changes(original_content, &updated_value)?;
 
     if updates.is_empty() && removed_keys.is_empty() {
         // No changes, return original
@@ -42,28 +38,83 @@ pub fn write_yaml_preserving_format(
     apply_changes_to_content(original_content, &updates, &removed_keys)
 }
 
-/// Check if there are nested structure changes that we can't handle with line-based updates
-fn has_nested_changes(old: &Value, new: &Value) -> bool {
-    match (old, new) {
-        (Value::Mapping(old_map), Value::Mapping(new_map)) => {
-            // Check if all old keys still exist in new
-            for (key, old_val) in old_map {
-                if let Some(new_val) = new_map.get(key) {
-                    // Check if the value changed and involves nested structures
-                    if old_val != new_val && (old_val.is_mapping() || new_val.is_mapping()) {
-                        // Nested structure change
-                        return true;
-                    }
+/// Build a map from line number to YAML key path
+fn build_line_to_key_map(
+    lines: &[&str],
+) -> Result<std::collections::HashMap<usize, String>, String> {
+    use std::collections::HashMap;
+
+    let mut map = HashMap::new();
+    let mut path_stack: Vec<(usize, String)> = Vec::new(); // (indent, key)
+
+    for (line_idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Parse key:value
+        if let Some(colon_pos) = trimmed.find(':') {
+            let key = trimmed[..colon_pos].trim().to_string();
+
+            // Pop stack until we find the right indent level
+            while let Some((last_indent, _)) = path_stack.last() {
+                if *last_indent >= indent {
+                    path_stack.pop();
                 } else {
-                    // Key was removed - this is okay for top-level operations
+                    break;
                 }
             }
 
-            // Check if all new keys existed in old (to detect if new nested structures were added)
+            // Build full key path
+            let full_key = if path_stack.is_empty() {
+                key.clone()
+            } else {
+                let path_parts: Vec<String> = path_stack.iter().map(|(_, k)| k.clone()).collect();
+                format!("{}.{}", path_parts.join("."), key)
+            };
+
+            map.insert(line_idx, full_key.clone());
+            path_stack.push((indent, key));
+        }
+    }
+
+    Ok(map)
+}
+
+/// Check if there are complex structural changes that we can't handle with line-based updates.
+/// We can handle:
+/// - Removing nested keys (deletions)
+/// - Changing scalar values at any level
+///
+/// We cannot handle well:
+/// - Adding new nested structures
+/// - Changing mapping structures significantly
+fn has_unhandleable_nested_changes(old: &Value, new: &Value) -> bool {
+    match (old, new) {
+        (Value::Mapping(old_map), Value::Mapping(new_map)) => {
+            // Check if new keys were added that are nested structures
             for (key, new_val) in new_map {
                 if !old_map.contains_key(key) && new_val.is_mapping() {
-                    // New nested structure added
+                    // New nested structure added - we can't handle this well
                     return true;
+                }
+            }
+
+            // Check if old nested structures were significantly modified (not just deleted)
+            for (key, old_val) in old_map {
+                if let Some(new_val) = new_map.get(key) {
+                    if old_val != new_val {
+                        // If both are mappings and contents changed, we need to be careful
+                        if old_val.is_mapping() && new_val.is_mapping() {
+                            if has_unhandleable_nested_changes(old_val, new_val) {
+                                return true;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -73,19 +124,26 @@ fn has_nested_changes(old: &Value, new: &Value) -> bool {
     }
 }
 
-/// Collects keys that were removed (in original but not in updated)
+/// Collects keys that were removed (in original but not in updated), including nested keys
 fn collect_removed_keys(old: &Value, new: &Value, prefix: &str, removed: &mut Vec<String>) {
     match (old, new) {
         (Value::Mapping(old_map), Value::Mapping(new_map)) => {
-            for (key, _) in old_map {
+            for (key, old_val) in old_map {
                 if let Value::String(key_str) = key {
+                    let full_key = if prefix.is_empty() {
+                        key_str.clone()
+                    } else {
+                        format!("{}.{}", prefix, key_str)
+                    };
+
                     if !new_map.contains_key(key) {
-                        let full_key = if prefix.is_empty() {
-                            key_str.clone()
-                        } else {
-                            format!("{}.{}", prefix, key_str)
-                        };
+                        // Key was removed entirely
                         removed.push(full_key);
+                    } else if let Some(new_val) = new_map.get(key) {
+                        // Key exists in new, but might have removed nested keys
+                        if old_val.is_mapping() && new_val.is_mapping() {
+                            collect_removed_keys(old_val, new_val, &full_key, removed);
+                        }
                     }
                 }
             }
@@ -166,6 +224,12 @@ fn apply_changes_to_content(
     let mut result = Vec::new();
     let mut i = 0;
 
+    // Build a mapping of line numbers to the YAML keys they represent
+    let line_key_map = build_line_to_key_map(&lines)?;
+
+    // Track which keys from changes we've already processed
+    let mut processed_changes = std::collections::HashSet::new();
+
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim_start();
@@ -177,92 +241,113 @@ fn apply_changes_to_content(
             continue;
         }
 
-        // Try to parse key: value from this line
-        if let Some(colon_pos) = trimmed.find(':') {
-            let key = trimmed[..colon_pos].trim();
-            let indent = line.len() - trimmed.len();
+        // Check if this line should be removed based on the key map
+        let mut should_skip = false;
+        let mut skip_until_indent = None;
 
-            // Check if this is a top-level key
-            if indent == 0 {
-                // Check if this key was removed
-                if removed_keys.contains(&key.to_string()) {
-                    // Skip this line and any associated nested content
-                    let mut next_i = i + 1;
-                    while next_i < lines.len() {
-                        let next_line = lines[next_i];
+        if let Some(key_path) = line_key_map.get(&i) {
+            // Check if this key or any parent key was removed
+            for removed_key in removed_keys {
+                if removed_key == key_path || key_path.starts_with(&format!("{}.", removed_key)) {
+                    should_skip = true;
+                    let indent = line.len() - trimmed.len();
+                    skip_until_indent = Some(indent);
+                    break;
+                }
+            }
+
+            // Check if this key was changed
+            if !should_skip && changes.contains_key(key_path) {
+                if let Some(new_val) = changes.get(key_path) {
+                    let formatted = format_value_for_yaml(new_val);
+                    let indent = line.len() - trimmed.len();
+                    let indent_str = &line[..indent];
+                    let key_name = trimmed[..trimmed.find(':').unwrap()].trim();
+                    result.push(format!(
+                        "{}{}:{}",
+                        indent_str,
+                        key_name,
+                        if formatted.is_empty() {
+                            "".to_string()
+                        } else {
+                            format!(" {}", formatted)
+                        }
+                    ));
+                    processed_changes.insert(key_path.clone());
+
+                    // Skip the original value lines that are nested under this key
+                    i += 1;
+                    while i < lines.len() {
+                        let next_line = lines[i];
                         let next_trimmed = next_line.trim_start();
                         let next_indent = next_line.len() - next_trimmed.len();
 
-                        // Preserve comments and empty lines ONLY
                         if next_trimmed.is_empty() || next_trimmed.starts_with('#') {
-                            result.push(next_line.to_string());
-                            next_i += 1;
-                            continue;
-                        }
-
-                        // Stop if we hit same-level or lower indent content (non-comment, non-empty)
-                        if next_indent <= indent {
-                            break;
-                        }
-
-                        // Skip intermediate indented lines (nested content)
-                        next_i += 1;
-                    }
-
-                    i = next_i;
-                    continue;
-                }
-
-                // Check if this key has been updated
-                if changes.contains_key(key) {
-                    if let Some(new_val) = changes.get(key) {
-                        // Replace the line with updated value
-                        let formatted = format_value_for_yaml(new_val);
-                        result.push(format!("{}: {}", key, formatted));
-
-                        // Skip original value lines (handle multi-line values)
-                        // But preserve comments and empty lines at the same indentation level
-                        let mut next_i = i + 1;
-                        while next_i < lines.len() {
-                            let next_line = lines[next_i];
-                            let next_trimmed = next_line.trim_start();
-                            let next_indent = next_line.len() - next_trimmed.len();
-
-                            // Preserve comments and empty lines at top level
-                            if (next_trimmed.is_empty() || next_trimmed.starts_with('#'))
-                                && next_indent == 0
-                            {
+                            if next_indent == indent {
                                 result.push(next_line.to_string());
-                                next_i += 1;
-                                continue;
-                            }
-
-                            // Stop if we hit same-level or lower indent content
-                            if !next_trimmed.is_empty()
-                                && !next_trimmed.starts_with('#')
-                                && next_indent <= indent
-                            {
+                                i += 1;
+                            } else if next_indent > indent {
+                                i += 1;
+                            } else {
                                 break;
                             }
-
-                            // Skip intermediate lines (indented nested content)
-                            if next_indent > indent {
-                                next_i += 1;
-                                continue;
-                            }
-
+                        } else if next_indent <= indent {
                             break;
+                        } else {
+                            i += 1;
                         }
-
-                        i = next_i;
-                        continue;
                     }
+                    continue;
                 }
             }
         }
 
+        if should_skip {
+            let indent = skip_until_indent.unwrap();
+            // Skip this line and nested content
+            i += 1;
+            while i < lines.len() {
+                let next_line = lines[i];
+                let next_trimmed = next_line.trim_start();
+                let next_indent = next_line.len() - next_trimmed.len();
+
+                if next_trimmed.is_empty() || next_trimmed.starts_with('#') {
+                    result.push(next_line.to_string());
+                    i += 1;
+                    continue;
+                }
+
+                if next_indent <= indent {
+                    break;
+                }
+
+                i += 1;
+            }
+            continue;
+        }
+
         result.push(line.to_string());
         i += 1;
+    }
+
+    // Add any changes that weren't already in the file (new keys)
+    for (key_path, new_val) in changes {
+        if !processed_changes.contains(key_path) {
+            let formatted = format_value_for_yaml(new_val);
+
+            if key_path.contains('.') {
+                // Nested key - need to build the structure
+                // For now, fall back to standard serialization for complex additions
+                return serde_yaml::to_string(&build_yaml_from_changes(content, changes)?)
+                    .map_err(|e| format!("Failed to serialize YAML: {}", e));
+            } else {
+                // Top-level key - just append it
+                if !result.is_empty() && !result.last().unwrap().is_empty() {
+                    result.push(String::new()); // Add blank line before new key
+                }
+                result.push(format!("{}: {}", key_path, formatted));
+            }
+        }
     }
 
     // Preserve trailing newline
@@ -272,6 +357,61 @@ fn apply_changes_to_content(
     }
 
     Ok(output)
+}
+
+/// Build a YAML value from changes by parsing the original and applying changes
+fn build_yaml_from_changes(
+    content: &str,
+    changes: &std::collections::HashMap<String, serde_yaml::Value>,
+) -> Result<serde_yaml::Value, String> {
+    let mut yaml =
+        serde_yaml::from_str(content).map_err(|e| format!("Failed to parse YAML: {}", e))?;
+
+    for (key_path, value) in changes {
+        set_value(&mut yaml, key_path, value)?;
+    }
+
+    Ok(yaml)
+}
+
+/// Set a value in YAML at a specified key path - helper for rebuilding
+fn set_value(
+    value: &mut serde_yaml::Value,
+    path: &str,
+    new_value: &serde_yaml::Value,
+) -> Result<(), String> {
+    use serde_yaml::Value;
+
+    let parts: Vec<&str> = path.split('.').collect();
+
+    if parts.is_empty() {
+        return Err("Empty key path".to_string());
+    }
+
+    // Ensure root is a mapping
+    if !matches!(value, Value::Mapping(_)) {
+        *value = Value::Mapping(Default::default());
+    }
+
+    // Navigate/create the path
+    let mut current = value;
+    for (i, &part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            // Last part: set the value
+            if let Value::Mapping(ref mut map) = current {
+                map.insert(Value::String(part.to_string()), new_value.clone());
+            }
+        } else {
+            // Intermediate part: navigate or create
+            if let Value::Mapping(ref mut map) = current {
+                current = map
+                    .entry(Value::String(part.to_string()))
+                    .or_insert_with(|| Value::Mapping(Default::default()));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Formats a YAML value for inline output

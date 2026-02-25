@@ -136,6 +136,7 @@ pub fn copy_value(
     dest_file: &str,
     dest_key: &str,
 ) -> Result<(), String> {
+    use crate::yaml_format_preserving;
     use std::fs;
 
     // Read source file
@@ -150,22 +151,29 @@ pub fn copy_value(
         .ok_or_else(|| format!("Key '{}' not found in '{}'", source_key, source_file))?;
 
     // Read destination file (or create if it doesn't exist)
-    let mut dest_yaml = if std::path::Path::new(dest_file).exists() {
+    let (mut dest_yaml, dest_contents_option) = if std::path::Path::new(dest_file).exists() {
         let dest_contents = fs::read_to_string(dest_file)
             .map_err(|e| format!("Failed to read destination file '{}': {}", dest_file, e))?;
 
-        serde_yaml::from_str(&dest_contents)
-            .map_err(|e| format!("Failed to parse YAML from '{}': {}", dest_file, e))?
+        let yaml = serde_yaml::from_str(&dest_contents)
+            .map_err(|e| format!("Failed to parse YAML from '{}': {}", dest_file, e))?;
+        (yaml, Some(dest_contents))
     } else {
-        Value::Mapping(Default::default())
+        (Value::Mapping(Default::default()), None)
     };
 
     // Set the value at destination
     set_value(&mut dest_yaml, dest_key, &value)?;
 
-    // Write destination file (for cp, use standard serialization to handle nested keys properly)
-    let dest_yaml_str = serde_yaml::to_string(&dest_yaml)
-        .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+    // Write destination file using format-preserving logic if possible
+    let dest_yaml_str = if let Some(dest_contents) = dest_contents_option {
+        // Destination file exists, preserve its formatting
+        yaml_format_preserving::write_yaml_preserving_format(&dest_contents, &dest_yaml)
+            .map_err(|e| format!("Failed to preserve YAML format: {}", e))?
+    } else {
+        // New destination file, use standard serialization
+        serde_yaml::to_string(&dest_yaml).map_err(|e| format!("Failed to serialize YAML: {}", e))?
+    };
 
     fs::write(dest_file, dest_yaml_str)
         .map_err(|e| format!("Failed to write to '{}': {}", dest_file, e))?;
@@ -184,6 +192,7 @@ pub fn move_value(
     dest_file: &str,
     dest_key: &str,
 ) -> Result<(), String> {
+    use crate::yaml_format_preserving;
     use std::fs;
 
     // First, copy the value from source to destination
@@ -199,9 +208,10 @@ pub fn move_value(
     // Unset the source key
     unset_at_path(&mut source_yaml, source_key)?;
 
-    // Write the modified source file (use standard serialization for nested keys)
-    let source_yaml_str = serde_yaml::to_string(&source_yaml)
-        .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+    // Always use format-preserving write to preserve comments and spacing
+    let source_yaml_str =
+        yaml_format_preserving::write_yaml_preserving_format(&source_contents, &source_yaml)
+            .map_err(|e| format!("Failed to preserve YAML format: {}", e))?;
 
     fs::write(source_file, &source_yaml_str)
         .map_err(|e| format!("Failed to write to '{}': {}", source_file, e))?;

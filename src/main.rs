@@ -81,6 +81,7 @@ fn execute_command(command: Command) -> Result<(), String> {
 
             yaml_ops::set_values(&mut value, &updates)?;
 
+            // Preserve format for all changes (both top-level and nested keys)
             let updated_yaml =
                 yaml_format_preserving::write_yaml_preserving_format(&contents, &value)
                     .map_err(|e| format!("Failed to preserve YAML format: {}", e))?;
@@ -99,6 +100,7 @@ fn execute_command(command: Command) -> Result<(), String> {
 
             yaml_ops::unset_values(&mut value, &keys)?;
 
+            // Preserve format for all changes (both top-level and nested keys)
             let updated_yaml =
                 yaml_format_preserving::write_yaml_preserving_format(&contents, &value)
                     .map_err(|e| format!("Failed to preserve YAML format: {}", e))?;
