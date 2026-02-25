@@ -23,26 +23,39 @@ cargo build --release
 
 ### Basic Usage
 
-**Search a single file (clean output):**
 ```bash
-ym grep config.yaml '.*\.password'
-# Output: key.path=value (no filename)
+$ ym grep -R 'database\..*\.password' tests/data/
+tests/data/app-config.yaml:database.primary.password: super_secret_123
+tests/data/app-config.yaml:database.replica.password: super_secret_123
+tests/data/config-dev.yaml:database.primary.password: dev_password
+tests/data/config-prod.yaml:database.primary.password: prod_secret_xyz789
+tests/data/config-prod.yaml:database.replica.password: prod_secret_xyz789
 ```
 
-**Search a directory recursively:**
+**Find all enabled/disabled feature flags:**
 ```bash
-ym grep -R config/ '.*\.password'
-# Output: path/to/file.yaml:key.path=value (with filename)
+$ ym grep -R '.*\.enabled' tests/data/ | head -10
+tests/data/app-config.yaml:monitoring.prometheus.enabled: true
+tests/data/feature-flags.yaml:features.payment_processing.enabled: true
+tests/data/feature-flags.yaml:features.payment_processing.stripe.enabled: true
+tests/data/feature-flags.yaml:features.notifications.email.enabled: true
+tests/data/config-dev.yaml:cache.redis.enabled: true
+tests/data/config-prod.yaml:database.replica.enabled: true
+tests/data/config-prod.yaml:monitoring.datadog.enabled: true
 ```
 
-**Update configuration values:**
+**Update multiple configuration values:**
 ```bash
-ym set config.yaml database.host=new-host.com database.port=5433
+$ ym set tests/data/app-config.yaml database.primary.port=5433 app.version=2.0.0
 ```
 
-**Remove sensitive data:**
+**Find all secrets (keys, tokens, API keys):**
 ```bash
-ym unset config.yaml database.password api.key
+$ ym grep -R '.*key|.*secret|.*token' tests/data/
+tests/data/config-dev.yaml:external_services.payment.api_key: sk_test_123456789
+tests/data/config-prod.yaml:external_services.payment.api_key: sk_live_9876543210abcdef
+tests/data/config-prod.yaml:external_services.email.api_key: SG.sendgrid_key_here
+tests/data/microservice-config.yaml:api.auth.secret: my_secret_key_123
 ```
 
 ## Features
@@ -51,9 +64,9 @@ ym unset config.yaml database.password api.key
 
 | Command | Purpose | Example |
 |---------|---------|---------|
-| **grep** | Search by key path pattern (regex) | `ym grep config.yaml '.*\.password'` |
-| **set** | Update YAML values | `ym set config.yaml app.version=2.0.0` |
-| **unset** | Remove keys from YAML | `ym unset config.yaml app.debug` |
+| **grep** | Search by key path pattern (regex) | `ym grep -R 'database\..*\.password' tests/data/` |
+| **set** | Update YAML values | `ym set tests/data/app-config.yaml app.version=2.0.0` |
+| **unset** | Remove keys from YAML | `ym unset tests/data/app-config.yaml database.password` |
 
 ### Key Capabilities
 
@@ -73,25 +86,37 @@ Search for keys matching a regex pattern.
 
 ```bash
 # Single file (outputs: key=value)
-ym grep <file> <pattern>
+ym grep <pattern> <file>
 
 # Recursive directory (outputs: file:key=value)
-ym grep -R <directory> <pattern>
+ym grep -R <pattern> <directory>
+```
+
+**Examples:**
+```bash
+# Find all database passwords
+ym grep -R 'database\..*\.password' tests/data/
+
+# Find enabled features (complex regex)
+ym grep -R '.*\.enabled' tests/data/
+
+# Find all credentials (password, API key, or secret)
+ym grep -R 'password|api_key|secret' tests/data/
 ```
 
 **Examples:**
 ```bash
 # Find all passwords
-ym grep config.yaml '.*\.password'
+ym grep '.*\.password' config.yaml
 
 # Find across directory
-ym grep -R . '.*\.password'
+ym grep -R '.*\.password' .
 
 # Find API ports
-ym grep config.yaml '.*\.api\.port'
+ym grep '.*\.api\.port' config.yaml
 
 # Find enabled features
-ym grep config.yaml '.*\.enabled'
+ym grep '.*\.enabled' config.yaml
 ```
 
 ### set - Update Values
@@ -152,56 +177,73 @@ Filename shown for multi-file results.
 
 ## Use Cases
 
-### Security Audit
+### Kubernetes & Helm Configuration
+Find and update replica counts across all Helm values:
 ```bash
-# Find all passwords
-ym grep -R . '.*\.password'
+# Discover all replicaCount settings
+$ ym grep -R 'replicaCount' tests/data/
+tests/data/helm-values.yaml:replicaCount: 3
 
-# Find API keys
-ym grep -R . '.*_key|.*_secret|.*_token'
+# Update replicas across deployments
+$ ym set tests/data/helm-values.yaml replicaCount=5
 ```
 
-### Configuration Management
+### Security Audit - Discover Sensitive Data
+Scan entire config directory for exposed secrets:
 ```bash
-# Update replica counts
-ym set helm-values.yaml replicaCount=5
-
-# Change database ports
-ym set config-prod.yaml database.primary.port=5433
+$ ym grep -R 'password|api_key|secret|token' tests/data/ | grep -v ': null'
+tests/data/app-config.yaml:database.primary.password: super_secret_123
+tests/data/config-dev.yaml:external_services.payment.api_key: sk_test_123456789
+tests/data/config-prod.yaml:external_services.email.api_key: SG.sendgrid_key_here
+tests/data/microservice-config.yaml:api.auth.secret: my_secret_key_123
 ```
 
-### Environment Validation
+### Infrastructure - Network Configuration
+Audit all host and port bindings (useful for security/firewall rules):
 ```bash
-# Verify prod settings
-ym grep config-prod.yaml 'database\.replica\..*'
-
-# Compare environments
-diff <(ym grep config-dev.yaml '.*') <(ym grep config-prod.yaml '.*')
+$ ym grep -R '.*\.(host|port)' tests/data/ | grep -E 'host:|port:' | head -10
+tests/data/app-config.yaml:database.primary.host: db-primary.example.com
+tests/data/app-config.yaml:database.primary.port: 5432
+tests/data/app-config.yaml:cache.redis.host: redis.example.com
+tests/data/openstack-config.yaml:nova_settings.api.host: 0.0.0.0
+tests/data/openstack-config.yaml:nova_settings.api.port: 8774
 ```
 
-### CI/CD Integration
+### Version Management
+Track application versions across multiple services:
 ```bash
-# Validate required keys
-ym grep config.yaml 'app\.version' > /dev/null && echo "OK" || echo "MISSING"
+$ ym grep -R 'version' tests/data/ | grep app.version
+tests/data/app-config.yaml:app.version: 1.2.3
+tests/data/minimal-config.yaml:app.version: 1.0.0
 
-# Count configuration items
-ym grep -R config/ '.*' | wc -l
+# Update version for release
+$ ym set tests/data/app-config.yaml app.version=1.3.0
 ```
 
 ## Regex Pattern Guide
 
-- `.*` - Match any characters
-- `\.` - Escape literal dots (required in paths)
-- `^pattern$` - Exact match
-- `|` - OR operator
-- `[a-z]` - Character classes
+Common regex patterns for finding configuration:
 
-**Common patterns:**
+- `.*\.password` - All password fields
+- `database\..*` - All database configuration
+- `.*\.(enabled|disabled)` - Feature flags
+- `.*key|.*secret|.*token` - Credentials and tokens
+- `^app\.` - Top-level app config
+- `(host|port)` - Network addresses
+
+**Real examples from test data:**
 ```bash
-ym grep config.yaml '.*\.password'           # All passwords
-ym grep config.yaml 'database\..*'           # All database settings
-ym grep config.yaml '.*\.api\..*'            # API configuration
-ym grep config.yaml '.*(password|secret)'    # Password or secret
+# Database passwords
+ym grep -R 'database\..*\.password' tests/data/
+
+# All enabled/disabled toggles
+ym grep -R '.*\.enabled' tests/data/
+
+# Credentials (password, API key, secret, token)
+ym grep -R 'password|api_key|secret|token' tests/data/
+
+# Network configuration (host and port pairs)
+ym grep -R '.*\.(host|port)' tests/data/
 ```
 
 ## Performance
@@ -299,17 +341,17 @@ Contributions welcome! Areas for enhancement:
 ## Quick Reference
 
 ```bash
-# Search
-ym grep file.yaml 'pattern'           # Single file (no filename)
-ym grep -R dir/ 'pattern'             # Recursive (with filename)
+# Search patterns across all configs
+ym grep -R 'database\..*\.password' tests/data/      # Find secrets
+ym grep -R '.*\.enabled' tests/data/                 # Find toggles
+ym grep -R 'password|api_key|secret' tests/data/     # Find credentials
 
-# Update
-ym set file.yaml key=value            # Single value
-ym set file.yaml k1=v1 k2=v2          # Multiple values
+# Update values
+ym set tests/data/app-config.yaml app.version=2.0.0  # Single value
+ym set tests/data/app-config.yaml port=5433 host=localhost  # Multiple
 
-# Delete
-ym unset file.yaml key                # Single key
-ym unset file.yaml k1 k2              # Multiple keys
+# Remove keys
+ym unset tests/data/app-config.yaml database.password  # Remove secret
 ```
 
 ## Support
