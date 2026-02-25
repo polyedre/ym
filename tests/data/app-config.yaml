@@ -1,10 +1,7 @@
----
-# Application configuration with multiple services
 app:
   name: myapp
   version: 1.2.3
   environment: production
-  
 database:
   primary:
     host: db-primary.example.com
@@ -24,7 +21,6 @@ database:
     pool:
       min_size: 2
       max_size: 10
-
 cache:
   redis:
     host: redis.example.com
@@ -33,21 +29,19 @@ cache:
     ttl: 3600
   memcached:
     hosts:
-      - cache1.example.com:11211
-      - cache2.example.com:11211
+    - cache1.example.com:11211
+    - cache2.example.com:11211
     ttl: 1800
-
 logging:
   level: info
   format: json
   outputs:
-    - stdout
-    - file
+  - stdout
+  - file
   file:
     path: /var/log/app.log
     max_size: 100MB
     retention_days: 30
-
 monitoring:
   prometheus:
     enabled: true
@@ -56,8 +50,8 @@ monitoring:
   datadog:
     enabled: false
     api_key: null
-
 ssl:
   certificate_path: /etc/ssl/certs/app.crt
   key_path: /etc/ssl/private/app.key
   verify_peer: true
+  new: prod_secret_xyz789

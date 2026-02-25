@@ -39,10 +39,10 @@ cargo build --release
     $ ym cp tests/data/config-prod.yaml:database.primary.password tests/data/app-config.yaml:database.secondary.password
 
     $ # Copy value from source.key to destination.key (same file, destination file is optional and defaults to source file)
-    $ ym cp tests/data/app-config.yaml:database.primary.password database.replica.password
+    $ ym cp tests/data/app-config.yaml:database.primary.password :database.replica.password
 
     $ # Copy value to a different file (with same key, destination key is optional and defaults to source key)
-    $ ym cp tests/data/app-config.yaml:app.name tests/data/config-prod.yaml:
+    $ ym cp tests/data/app-config.yaml:app.name tests/data/config-prod.yaml
     ```
 
 - use **mv** to move a value from one key to another (copies then deletes the source):
@@ -52,8 +52,8 @@ cargo build --release
     $ ym mv tests/data/config-prod.yaml:database.primary.password tests/data/app-config.yaml:database.secondary.password
 
     $ # Move value from source.key to destination.key (same file, destination file is optional and defaults to source file)
-    $ ym mv tests/data/app-config.yaml:database.primary.password database.replica.password
+    $ ym mv tests/data/app-config.yaml:database.primary.password :database.replica.password
 
     $ # Move value to a different file (with same key, destination key is optional and defaults to source key)
-    $ ym mv tests/data/app-config.yaml:app.name tests/data/config-prod.yaml:
+    $ ym mv tests/data/app-config.yaml:app.name tests/data/config-prod.yaml
     ```
