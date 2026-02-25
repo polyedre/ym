@@ -114,7 +114,7 @@ pub fn get_value(value: &Value, path: &str) -> Result<Option<Value>, String> {
     let mut current = value;
     for part in parts {
         if let Value::Mapping(map) = current {
-            match map.get(&Value::String(part.to_string())) {
+            match map.get(Value::String(part.to_string())) {
                 Some(next) => current = next,
                 None => return Ok(None),
             }
@@ -263,14 +263,14 @@ fn unset_at_path(value: &mut Value, path: &str) -> Result<(), String> {
     if parts.len() == 1 {
         // Direct child: remove from root mapping
         if let Value::Mapping(ref mut map) = value {
-            map.remove(&Value::String(parts[0].to_string()));
+            map.remove(Value::String(parts[0].to_string()));
         }
     } else {
         // Navigate to parent, then remove the final key
         let mut current = value;
         for &part in parts[..parts.len() - 1].iter() {
             if let Value::Mapping(ref mut map) = current {
-                if let Some(next) = map.get_mut(&Value::String(part.to_string())) {
+                if let Some(next) = map.get_mut(Value::String(part.to_string())) {
                     current = next;
                 } else {
                     // Path doesn't exist
@@ -284,7 +284,7 @@ fn unset_at_path(value: &mut Value, path: &str) -> Result<(), String> {
 
         // Remove the final key
         if let Value::Mapping(ref mut map) = current {
-            map.remove(&Value::String(parts[parts.len() - 1].to_string()));
+            map.remove(Value::String(parts[parts.len() - 1].to_string()));
         }
     }
 
