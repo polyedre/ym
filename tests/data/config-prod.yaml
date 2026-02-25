@@ -12,7 +12,6 @@ database:
     host: prod-db-primary.internal
     port: 5432
     username: prod_user
-    password: prod_secret_xyz789
     ssl: true
     pool_size: 50
   replica:
