@@ -147,10 +147,19 @@ fn grep_stdin(pattern: &str) -> Result<(), String> {
         .read_to_string(&mut buffer)
         .map_err(|e| format!("Failed to read from stdin: {}", e))?;
 
+    if buffer.trim().is_empty() {
+        return Err("No input provided".to_string());
+    }
+
     let value = serde_yaml::from_str(&buffer)
         .map_err(|e| format!("Failed to parse YAML from stdin: {}", e))?;
 
     let results = yaml_ops::grep(&value, pattern)?;
+
+    if results.is_empty() {
+        return Err("No matches found".to_string());
+    }
+
     let width = get_terminal_width();
     for (key, val) in results {
         println!("{}", yaml_ops::format_result(&key, &val, width));
@@ -161,17 +170,22 @@ fn grep_stdin(pattern: &str) -> Result<(), String> {
 fn grep_path(
     file: &str,
     pattern: &str,
-    _recursive: bool,
+    recursive: bool,
     show_filename: bool,
 ) -> Result<(), String> {
     let path = Path::new(file);
 
     if path.is_file() {
-        // If it's a file, search that file
         grep_single(file, pattern, show_filename)
     } else if path.is_dir() {
-        // If it's a directory, search it recursively regardless of -R flag
-        search_dir(path, pattern, show_filename)
+        if recursive {
+            search_dir(path, pattern, show_filename)
+        } else {
+            Err(format!(
+                "'{}' is a directory (use -R to search recursively)",
+                file
+            ))
+        }
     } else {
         Err(format!("'{}' is not a file or directory", file))
     }
