@@ -1,0 +1,63 @@
+---
+# Environment-specific configuration (production)
+environment: production
+
+app:
+  debug: false
+  log_level: warn
+  name: myapp-prod
+
+database:
+  primary:
+    host: prod-db-primary.internal
+    port: 5432
+    username: prod_user
+    password: prod_secret_xyz789
+    ssl: true
+    pool_size: 50
+  replica:
+    enabled: true
+    host: prod-db-replica.internal
+    port: 5432
+    username: prod_user
+    password: prod_secret_xyz789
+    ssl: true
+    pool_size: 30
+
+cache:
+  redis:
+    enabled: true
+    host: prod-redis-cluster.internal
+    port: 6379
+    password: redis_prod_secret
+    ttl: 3600
+    cluster_enabled: true
+
+api:
+  base_url: https://api.example.com
+  timeout: 60
+  retries: 5
+
+external_services:
+  payment:
+    url: https://api.payment.com/v1
+    api_key: sk_live_9876543210abcdef
+  email:
+    provider: sendgrid
+    smtp_host: smtp.sendgrid.net
+    smtp_port: 587
+    api_key: SG.sendgrid_key_here
+
+monitoring:
+  datadog:
+    enabled: true
+    api_key: dd_api_key_123
+    app_key: dd_app_key_456
+  sentry:
+    enabled: true
+    dsn: https://key@sentry.io/project_id
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention_days: 30

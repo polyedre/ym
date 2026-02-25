@@ -1,0 +1,63 @@
+---
+# Hiera-style hierarchical configuration
+nova_settings:
+  db:
+    connection_string: mysql://localhost/nova
+    username: nova_user
+    password: nova_db_password
+    pool_size: 20
+    max_overflow: 40
+  api:
+    host: 0.0.0.0
+    port: 8774
+    workers: 4
+    timeout: 600
+  messaging:
+    transport_url: rabbit://guest:guest@localhost:5672//
+    rpc_backend: rabbit
+  scheduler:
+    workers: 1
+    max_attempts: 5
+
+neutron_settings:
+  db:
+    connection_string: mysql://localhost/neutron
+    username: neutron_user
+    password: neutron_db_password
+    pool_size: 20
+  api:
+    host: 0.0.0.0
+    port: 9696
+    workers: 2
+  ml2:
+    type_drivers:
+      - flat
+      - vlan
+      - vxlan
+    mechanism_drivers:
+      - openvswitch
+
+barbican_settings:
+  db:
+    connection_string: mysql://localhost/barbican
+    username: barbican_user
+    password: barbican_db_password
+  api:
+    host: 0.0.0.0
+    port: 9311
+    workers: 2
+  crypto:
+    plugin: simple_crypto
+    kek: 00000000000000000000000000000000
+
+glance_settings:
+  db:
+    connection_string: mysql://localhost/glance
+    username: glance_user
+    password: glance_db_password
+  api:
+    bind_host: 0.0.0.0
+    bind_port: 9292
+    workers: 2
+  registry:
+    port: 9191

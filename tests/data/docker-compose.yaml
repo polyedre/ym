@@ -1,0 +1,71 @@
+---
+# Docker Compose configuration
+version: '3.9'
+
+services:
+  web:
+    image: myapp:1.0.0
+    container_name: web-server
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_USER: app_user
+      DB_PASSWORD: db_password_123
+      REDIS_URL: redis://cache:6379
+    depends_on:
+      - database
+      - cache
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  database:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: db_password_123
+      POSTGRES_DB: appdb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  cache:
+    image: redis:7-alpine
+    container_name: redis-cache
+    command: redis-server --requirepass cache_password_456
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer-ui
+    ports:
+      - "8081:8080"
+    depends_on:
+      - database
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  app-network:
+    driver: bridge

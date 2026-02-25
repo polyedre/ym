@@ -1,0 +1,12 @@
+---
+# Minimal configuration with just core settings
+app:
+  name: simple-app
+  debug: true
+  version: 1.0.0
+
+database:
+  host: db.local
+  port: 5432
+  username: user
+  password: pass

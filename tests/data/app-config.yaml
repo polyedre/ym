@@ -1,0 +1,63 @@
+---
+# Application configuration with multiple services
+app:
+  name: myapp
+  version: 1.2.3
+  environment: production
+  
+database:
+  primary:
+    host: db-primary.example.com
+    port: 5432
+    username: app_user
+    password: super_secret_123
+    ssl: true
+    pool:
+      min_size: 5
+      max_size: 20
+  replica:
+    host: db-replica.example.com
+    port: 5432
+    username: app_user
+    password: super_secret_123
+    ssl: true
+    pool:
+      min_size: 2
+      max_size: 10
+
+cache:
+  redis:
+    host: redis.example.com
+    port: 6379
+    password: redis_password_456
+    ttl: 3600
+  memcached:
+    hosts:
+      - cache1.example.com:11211
+      - cache2.example.com:11211
+    ttl: 1800
+
+logging:
+  level: info
+  format: json
+  outputs:
+    - stdout
+    - file
+  file:
+    path: /var/log/app.log
+    max_size: 100MB
+    retention_days: 30
+
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+    scrape_interval: 15s
+  datadog:
+    enabled: false
+    api_key: null
+
+ssl:
+  certificate_path: /etc/ssl/certs/app.crt
+  key_path: /etc/ssl/private/app.key
+  verify_peer: true

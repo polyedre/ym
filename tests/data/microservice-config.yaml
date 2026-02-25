@@ -1,0 +1,41 @@
+---
+# Simple configuration file for a microservice
+service:
+  name: user-service
+  version: 2.1.0
+  port: 3000
+  debug: false
+
+server:
+  host: 0.0.0.0
+  timeout: 30
+  max_connections: 1000
+
+database:
+  type: postgresql
+  host: localhost
+  port: 5432
+  name: users_db
+  user: postgres
+  password: postgres_pass
+
+api:
+  auth:
+    enabled: true
+    method: jwt
+    secret: my_secret_key_123
+    expiration: 3600
+  rate_limit:
+    enabled: true
+    requests_per_minute: 100
+  cors:
+    enabled: true
+    origins:
+      - http://localhost:3000
+      - https://app.example.com
+
+features:
+  user_registration: true
+  social_login: false
+  two_factor_auth: true
+  email_verification: true

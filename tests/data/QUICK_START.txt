@@ -1,0 +1,147 @@
+================================================================================
+                        YM TOOL - QUICK START GUIDE
+================================================================================
+
+OVERVIEW
+--------
+The tests/data/ directory contains 14 real-world YAML configuration files
+with comprehensive documentation and examples.
+
+FILES OVERVIEW
+--------------
+Basic Files (start here):
+  - minimal-config.yaml          (182 bytes, 3-level nesting)
+  - microservice-config.yaml     (681 bytes, single service)
+  - k8s-service.yaml             (364 bytes, Kubernetes)
+
+Multi-Service Files:
+  - app-config.yaml              (1.1K, 50+ keys, DB/cache/logging)
+  - openstack-config.yaml        (1.3K, 4 services, pattern matching)
+  - config-dev.yaml / config-prod.yaml  (Compare environments)
+
+Container & IaC Files:
+  - docker-compose.yaml          (1.4K, multi-container setup)
+  - k8s-deployment.yaml          (1.1K, Kubernetes deployment)
+  - helm-values.yaml             (1.7K, resource management)
+  - terraform-values.yaml        (1.3K, infrastructure code)
+
+DevOps/Modern Stack:
+  - ci-pipeline.yaml             (1.8K, GitHub Actions)
+  - argocd-app.yaml              (759B, GitOps)
+  - feature-flags.yaml           (1.1K, feature toggles)
+
+QUICK COMMANDS
+--------------
+
+Search for passwords:
+  $ ym grep tests/data/app-config.yaml '.*\.password'
+
+Find API ports:
+  $ ym grep tests/data/openstack-config.yaml '.*api\.port'
+
+Find feature toggles:
+  $ ym grep tests/data/feature-flags.yaml '.*\.enabled'
+
+Update replica count:
+  $ ym set tests/data/helm-values.yaml replicaCount=5
+
+Update multiple values:
+  $ ym set tests/data/config-prod.yaml database.primary.port=5433 app.log_level=warn
+
+Remove a key:
+  $ ym unset tests/data/feature-flags.yaml features.experimental
+
+DOCUMENTATION
+--------------
+README.md          - Detailed file descriptions and use cases
+EXAMPLES.md        - Practical usage patterns and integration
+TEST_SHOWCASE.md   - Live examples and outputs
+INDEX.md           - Complete navigation guide
+QUICK_START.txt    - This file
+
+LEARNING PATH
+-------------
+Day 1: Basics
+  1. Read README.md
+  2. Try: ym grep tests/data/minimal-config.yaml 'app\..*'
+  3. Try: ym set tests/data/minimal-config.yaml app.version=2.0.0
+  4. Try: ym unset tests/data/minimal-config.yaml app.debug
+
+Day 2: Patterns
+  1. Read EXAMPLES.md
+  2. Work with app-config.yaml, microservice-config.yaml
+  3. Try regex patterns for passwords, hosts, ports
+
+Day 3: Advanced
+  1. Read TEST_SHOWCASE.md
+  2. Try openstack-config.yaml (multiple services)
+  3. Create shell scripts using ym
+
+Day 4: Real-World
+  1. Compare config-dev.yaml vs config-prod.yaml
+  2. Update helm-values.yaml, terraform-values.yaml
+  3. Create validation/automation workflows
+
+COMMON PATTERNS
+---------------
+
+Find all passwords:
+  ym grep <file> '.*\.password'
+
+Find database hosts:
+  ym grep <file> '.*\.db\.host'
+
+Find API configurations:
+  ym grep <file> '.*\.api\..*'
+
+Find enabled features:
+  ym grep <file> '.*\.enabled'
+
+Find with specific value:
+  ym grep <file> '.*=true'
+
+UPDATE EXAMPLES
+---------------
+
+Single update:
+  ym set file.yaml key.path=new_value
+
+Multiple updates:
+  ym set file.yaml key1=val1 key2=val2 key3=val3
+
+Create new nested path:
+  ym set file.yaml new.section.key=value
+
+STATISTICS
+----------
+Total YAML files:        14
+Total documentation:      4
+Total files:             18
+Total keys:            500+
+Max nesting depth:       5 levels
+File size range:    182B - 1.8K
+Real-world scenarios:    10+
+
+USE CASES COVERED
+-----------------
+✓ DevOps/SRE Operations
+✓ Platform Engineering
+✓ Infrastructure as Code
+✓ Security Auditing
+✓ Application Configuration
+✓ Kubernetes Management
+✓ Microservice Configuration
+✓ CI/CD Pipelines
+✓ Feature Flag Management
+✓ Multi-Environment Management
+
+NEXT STEPS
+----------
+1. Start with INDEX.md for complete navigation
+2. Choose a test file from README.md based on your use case
+3. Follow examples in EXAMPLES.md
+4. Refer to TEST_SHOWCASE.md for live output examples
+5. Create your own scripts using the patterns shown
+
+================================================================================
+For detailed documentation, see the *.md files in this directory

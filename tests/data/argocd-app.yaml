@@ -1,0 +1,41 @@
+---
+# ArgoCD Application manifest
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-prod
+  namespace: argocd
+
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/myorg/myapp-charts
+    targetRevision: main
+    path: charts/myapp
+    helm:
+      releaseName: myapp
+      values: |
+        replicaCount: 3
+        image:
+          tag: 1.2.3
+      parameters:
+        - name: environment
+          value: production
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

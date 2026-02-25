@@ -1,0 +1,40 @@
+---
+# Environment-specific configuration (dev)
+environment: development
+
+app:
+  debug: true
+  log_level: debug
+  name: myapp-dev
+
+database:
+  primary:
+    host: localhost
+    port: 5432
+    username: dev_user
+    password: dev_password
+    ssl: false
+  replica:
+    enabled: false
+
+cache:
+  redis:
+    enabled: true
+    host: localhost
+    port: 6379
+    password: null
+    ttl: 300
+
+api:
+  base_url: http://localhost:8000
+  timeout: 30
+  retries: 3
+
+external_services:
+  payment:
+    url: https://sandbox.payment.api/v1
+    api_key: sk_test_123456789
+  email:
+    provider: console
+    smtp_host: null
+    smtp_port: null
