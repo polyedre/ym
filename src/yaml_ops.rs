@@ -207,3 +207,339 @@ fn format_mapping_result(key: &str, value: &Value, _terminal_width: usize) -> St
 
     format!("{}:\n{}", key, indented)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_yaml(yaml_str: &str) -> Value {
+        serde_yaml::from_str(yaml_str).expect("Failed to parse YAML")
+    }
+
+    // ==================== grep() Tests ====================
+
+    #[test]
+    fn test_grep_simple_key() {
+        let yaml = parse_yaml("name: Alice\nage: 30");
+        let results = grep(&yaml, "name").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "name");
+        assert_eq!(results[0].1.as_str().unwrap(), "Alice");
+    }
+
+    #[test]
+    fn test_grep_exact_match() {
+        let yaml_str = r#"
+database:
+  host: localhost
+  port: 5432
+cache:
+  host: redis
+"#;
+        let yaml = parse_yaml(yaml_str);
+        let results = grep(&yaml, "^database\\.host$").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "database.host");
+    }
+
+    #[test]
+    fn test_grep_pattern_wildcard() {
+        let yaml_str = r#"
+database:
+  host: localhost
+  port: 5432
+  username: admin
+"#;
+        let yaml = parse_yaml(yaml_str);
+        let results = grep(&yaml, "database\\..*").unwrap();
+        assert_eq!(results.len(), 3);
+        let keys: Vec<_> = results.iter().map(|r| r.0.as_str()).collect();
+        assert!(keys.contains(&"database.host"));
+        assert!(keys.contains(&"database.port"));
+        assert!(keys.contains(&"database.username"));
+    }
+
+    #[test]
+    fn test_grep_nested_paths() {
+        let yaml_str = r#"
+app:
+  server:
+    address: 0.0.0.0
+    port: 8080
+"#;
+        let yaml = parse_yaml(yaml_str);
+        let results = grep(&yaml, "app\\.server.*").unwrap();
+        // When "app.server" matches the pattern, it stops recursing, returning just "app.server" with its whole subtree
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "app.server");
+        // The value should be the whole server mapping
+        assert!(results[0].1.is_mapping());
+    }
+
+    #[test]
+    fn test_grep_no_match() {
+        let yaml = parse_yaml("name: Alice");
+        let results = grep(&yaml, "nonexistent").unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_grep_invalid_regex() {
+        let yaml = parse_yaml("name: Alice");
+        let result = grep(&yaml, "[invalid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid regex"));
+    }
+
+    #[test]
+    fn test_grep_with_alternation() {
+        let yaml_str = r#"
+dev:
+  password: devpass
+prod:
+  password: prodpass
+staging:
+  token: stagingtoken
+"#;
+        let yaml = parse_yaml(yaml_str);
+        let results = grep(&yaml, "(dev|prod)\\.password").unwrap();
+        assert_eq!(results.len(), 2);
+        let keys: Vec<_> = results.iter().map(|r| r.0.as_str()).collect();
+        assert!(keys.contains(&"dev.password"));
+        assert!(keys.contains(&"prod.password"));
+    }
+
+    #[test]
+    fn test_grep_stops_at_match() {
+        let yaml_str = r#"
+config:
+  nested:
+    value: test
+"#;
+        let yaml = parse_yaml(yaml_str);
+        let results = grep(&yaml, "^config$").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "config");
+        assert!(results[0].1.is_mapping());
+    }
+
+    // ==================== set_values() Tests ====================
+
+    #[test]
+    fn test_set_simple_value() {
+        let mut yaml = parse_yaml("name: Alice");
+        let mut updates = HashMap::new();
+        updates.insert("name".to_string(), "Bob".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(yaml["name"].as_str().unwrap(), "Bob");
+    }
+
+    #[test]
+    fn test_set_new_key() {
+        let mut yaml = parse_yaml("name: Alice");
+        let mut updates = HashMap::new();
+        updates.insert("age".to_string(), "30".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(yaml["age"].as_str().unwrap(), "30");
+    }
+
+    #[test]
+    fn test_set_nested_path_creates_structure() {
+        let mut yaml = Value::Mapping(Default::default());
+        let mut updates = HashMap::new();
+        updates.insert("database.host".to_string(), "localhost".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(yaml["database"]["host"].as_str().unwrap(), "localhost");
+    }
+
+    #[test]
+    fn test_set_deep_nesting() {
+        let mut yaml = Value::Mapping(Default::default());
+        let mut updates = HashMap::new();
+        updates.insert("app.server.config.timeout".to_string(), "30".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(
+            yaml["app"]["server"]["config"]["timeout"].as_str().unwrap(),
+            "30"
+        );
+    }
+
+    #[test]
+    fn test_set_multiple_values() {
+        let mut yaml = Value::Mapping(Default::default());
+        let mut updates = HashMap::new();
+        updates.insert("key1".to_string(), "value1".to_string());
+        updates.insert("key2".to_string(), "value2".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(yaml["key1"].as_str().unwrap(), "value1");
+        assert_eq!(yaml["key2"].as_str().unwrap(), "value2");
+    }
+
+    #[test]
+    fn test_set_overwrites_existing() {
+        let mut yaml = parse_yaml("config:\n  level: info");
+        let mut updates = HashMap::new();
+        updates.insert("config.level".to_string(), "debug".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(yaml["config"]["level"].as_str().unwrap(), "debug");
+    }
+
+    #[test]
+    fn test_set_preserves_siblings() {
+        let yaml_str = r#"
+database:
+  host: localhost
+  port: 5432
+  username: admin
+"#;
+        let mut yaml = parse_yaml(yaml_str);
+        let mut updates = HashMap::new();
+        updates.insert("database.port".to_string(), "3306".to_string());
+
+        set_values(&mut yaml, &updates).unwrap();
+        assert_eq!(yaml["database"]["port"].as_str().unwrap(), "3306");
+        assert_eq!(yaml["database"]["host"].as_str().unwrap(), "localhost");
+        assert_eq!(yaml["database"]["username"].as_str().unwrap(), "admin");
+    }
+
+    // ==================== unset_values() Tests ====================
+
+    #[test]
+    fn test_unset_top_level_key() {
+        let mut yaml = parse_yaml("name: Alice\nage: 30");
+        unset_values(&mut yaml, &["age".to_string()]).unwrap();
+        assert_eq!(yaml["age"], Value::Null);
+        assert_eq!(yaml["name"].as_str().unwrap(), "Alice");
+    }
+
+    #[test]
+    fn test_unset_nested_key() {
+        let yaml_str = r#"
+database:
+  host: localhost
+  port: 5432
+"#;
+        let mut yaml = parse_yaml(yaml_str);
+        unset_values(&mut yaml, &["database.port".to_string()]).unwrap();
+        assert_eq!(yaml["database"]["port"], Value::Null);
+        assert_eq!(yaml["database"]["host"].as_str().unwrap(), "localhost");
+    }
+
+    #[test]
+    fn test_unset_deep_nested_key() {
+        let yaml_str = r#"
+app:
+  server:
+    config:
+      timeout: 30
+      retries: 3
+"#;
+        let mut yaml = parse_yaml(yaml_str);
+        unset_values(&mut yaml, &["app.server.config.timeout".to_string()]).unwrap();
+        assert_eq!(yaml["app"]["server"]["config"]["timeout"], Value::Null);
+        assert_eq!(yaml["app"]["server"]["config"]["retries"].as_i64(), Some(3));
+    }
+
+    #[test]
+    fn test_unset_multiple_keys() {
+        let mut yaml = parse_yaml("a: 1\nb: 2\nc: 3");
+        unset_values(&mut yaml, &["a".to_string(), "c".to_string()]).unwrap();
+        assert_eq!(yaml["a"], Value::Null);
+        assert_eq!(yaml["b"].as_i64(), Some(2));
+        assert_eq!(yaml["c"], Value::Null);
+    }
+
+    #[test]
+    fn test_unset_nonexistent_key() {
+        let mut yaml = parse_yaml("name: Alice");
+        unset_values(&mut yaml, &["nonexistent".to_string()]).unwrap();
+        assert_eq!(yaml["name"].as_str().unwrap(), "Alice");
+    }
+
+    #[test]
+    fn test_unset_nonexistent_nested_path() {
+        let yaml_str = r#"
+database:
+  host: localhost
+"#;
+        let mut yaml = parse_yaml(yaml_str);
+        unset_values(&mut yaml, &["database.nonexistent".to_string()]).unwrap();
+        assert_eq!(yaml["database"]["host"].as_str().unwrap(), "localhost");
+    }
+
+    // ==================== format_result() Tests ====================
+
+    #[test]
+    fn test_format_string_value() {
+        let value = Value::String("hello".to_string());
+        let result = format_result("message", &value, 80);
+        assert_eq!(result, "message: hello");
+    }
+
+    #[test]
+    fn test_format_number_value() {
+        let value = Value::Number(42.into());
+        let result = format_result("count", &value, 80);
+        assert_eq!(result, "count: 42");
+    }
+
+    #[test]
+    fn test_format_boolean_true() {
+        let value = Value::Bool(true);
+        let result = format_result("enabled", &value, 80);
+        assert_eq!(result, "enabled: true");
+    }
+
+    #[test]
+    fn test_format_boolean_false() {
+        let value = Value::Bool(false);
+        let result = format_result("enabled", &value, 80);
+        assert_eq!(result, "enabled: false");
+    }
+
+    #[test]
+    fn test_format_null_value() {
+        let value = Value::Null;
+        let result = format_result("empty", &value, 80);
+        assert_eq!(result, "empty: null");
+    }
+
+    #[test]
+    fn test_format_mapping_value() {
+        let value = parse_yaml("host: localhost\nport: 5432");
+        let result = format_result("database", &value, 80);
+        assert!(result.starts_with("database:\n"));
+        assert!(result.contains("host"));
+        assert!(result.contains("localhost"));
+    }
+
+    #[test]
+    fn test_format_truncates_long_string() {
+        let long_string = "a".repeat(100);
+        let value = Value::String(long_string);
+        let result = format_result("key", &value, 20);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 23);
+    }
+
+    #[test]
+    fn test_format_does_not_truncate_short_string() {
+        let value = Value::String("short".to_string());
+        let result = format_result("key", &value, 80);
+        assert_eq!(result, "key: short");
+        assert!(!result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_format_sequence() {
+        let value = parse_yaml("- item1\n- item2\n- item3");
+        let result = format_result("items", &value, 80);
+        assert!(result.contains("items:"));
+    }
+}
