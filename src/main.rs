@@ -119,6 +119,20 @@ fn execute_command(command: Command) -> Result<(), String> {
 
             Ok(())
         }
+        Command::Mv {
+            source_file,
+            source_key,
+            dest_file,
+            dest_key,
+        } => {
+            // Use source values as defaults
+            let final_dest_file = dest_file.unwrap_or_else(|| source_file.clone());
+            let final_dest_key = dest_key.unwrap_or_else(|| source_key.clone());
+
+            yaml_ops::move_value(&source_file, &source_key, &final_dest_file, &final_dest_key)?;
+
+            Ok(())
+        }
     }
 }
 

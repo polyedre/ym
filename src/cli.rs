@@ -22,6 +22,12 @@ pub enum Command {
         dest_file: Option<String>,
         dest_key: Option<String>,
     },
+    Mv {
+        source_file: String,
+        source_key: String,
+        dest_file: Option<String>,
+        dest_key: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -68,6 +74,15 @@ pub enum Commands {
     },
     /// Copy a value from one key to another (same or different file)
     Cp {
+        /// Source file and key in format: file.yaml:key.path
+        source: String,
+
+        /// Destination file and key in format: file.yaml:key.path (optional)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        destination: Vec<String>,
+    },
+    /// Move a value from one key to another (deletes source after copying)
+    Mv {
         /// Source file and key in format: file.yaml:key.path
         source: String,
 
@@ -143,6 +158,38 @@ pub fn parse_cli() -> Result<Command, String> {
             }
 
             Ok(Command::Cp {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            })
+        }
+        Commands::Mv {
+            source,
+            destination,
+        } => {
+            // Parse source as file:key
+            let (source_file, source_key) = parse_file_key_pair(&source)?;
+
+            // Parse destination if provided
+            let (dest_file, dest_key) = if destination.is_empty() {
+                // No destination provided: error if neither file nor key changes
+                (None, None)
+            } else if destination.len() == 1 {
+                // Single destination argument
+                parse_optional_file_key_pair(&destination[0])?
+            } else {
+                return Err("mv accepts at most one destination argument".to_string());
+            };
+
+            // Validate that at least one of dest_file or dest_key is provided
+            if dest_file.is_none() && dest_key.is_none() {
+                return Err(
+                    "destination file and destination key cannot both be omitted".to_string(),
+                );
+            }
+
+            Ok(Command::Mv {
                 source_file,
                 source_key,
                 dest_file,
@@ -268,6 +315,32 @@ mod tests {
                 }
 
                 Ok(Command::Cp {
+                    source_file,
+                    source_key,
+                    dest_file,
+                    dest_key,
+                })
+            }
+            Commands::Mv {
+                source,
+                destination,
+            } => {
+                let (source_file, source_key) = parse_file_key_pair(&source)?;
+                let (dest_file, dest_key) = if destination.is_empty() {
+                    (None, None)
+                } else if destination.len() == 1 {
+                    parse_optional_file_key_pair(&destination[0])?
+                } else {
+                    return Err("mv accepts at most one destination argument".to_string());
+                };
+
+                if dest_file.is_none() && dest_key.is_none() {
+                    return Err(
+                        "destination file and destination key cannot both be omitted".to_string(),
+                    );
+                }
+
+                Ok(Command::Mv {
                     source_file,
                     source_key,
                     dest_file,
@@ -658,5 +731,132 @@ mod tests {
         assert!(result
             .unwrap_err()
             .contains("cp accepts at most one destination argument"));
+    }
+
+    // ==================== mv Tests ====================
+
+    #[test]
+    fn test_parse_mv_same_file_same_key() {
+        // Error: both destination file and key omitted
+        let result = test_with_args(vec!["ym", "mv", "file.yaml:source.key"]);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("destination file and destination key cannot both be omitted"));
+    }
+
+    #[test]
+    fn test_parse_mv_same_file_different_key() {
+        let cmd = test_with_args(vec!["ym", "mv", "file.yaml:source.key", "dest.key"]).unwrap();
+
+        match cmd {
+            Command::Mv {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "file.yaml");
+                assert_eq!(source_key, "source.key");
+                assert_eq!(dest_file, None);
+                assert_eq!(dest_key, Some("dest.key".to_string()));
+            }
+            _ => panic!("Expected Mv command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mv_different_file_same_key() {
+        let cmd = test_with_args(vec!["ym", "mv", "source.yaml:mykey", "dest.yaml:mykey"]).unwrap();
+
+        match cmd {
+            Command::Mv {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "source.yaml");
+                assert_eq!(source_key, "mykey");
+                assert_eq!(dest_file, Some("dest.yaml".to_string()));
+                assert_eq!(dest_key, Some("mykey".to_string()));
+            }
+            _ => panic!("Expected Mv command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mv_different_file_different_key() {
+        let cmd = test_with_args(vec![
+            "ym",
+            "mv",
+            "source.yaml:source.key",
+            "dest.yaml:dest.key",
+        ])
+        .unwrap();
+
+        match cmd {
+            Command::Mv {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "source.yaml");
+                assert_eq!(source_key, "source.key");
+                assert_eq!(dest_file, Some("dest.yaml".to_string()));
+                assert_eq!(dest_key, Some("dest.key".to_string()));
+            }
+            _ => panic!("Expected Mv command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mv_only_destination_file() {
+        let cmd = test_with_args(vec!["ym", "mv", "source.yaml:mykey", "dest.yaml:"]).unwrap();
+
+        match cmd {
+            Command::Mv {
+                source_file,
+                source_key,
+                dest_file,
+                dest_key,
+            } => {
+                assert_eq!(source_file, "source.yaml");
+                assert_eq!(source_key, "mykey");
+                assert_eq!(dest_file, Some("dest.yaml".to_string()));
+                assert_eq!(dest_key, None);
+            }
+            _ => panic!("Expected Mv command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mv_missing_source_key() {
+        let result = test_with_args(vec!["ym", "mv", "source.yaml", "dest.key"]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid file:key pair"));
+    }
+
+    #[test]
+    fn test_parse_mv_invalid_source_format() {
+        let result = test_with_args(vec!["ym", "mv", "invalid", "dest.key"]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid file:key pair"));
+    }
+
+    #[test]
+    fn test_parse_mv_too_many_arguments() {
+        let result = test_with_args(vec![
+            "ym",
+            "mv",
+            "source.yaml:key",
+            "dest1.yaml:key",
+            "dest2.yaml:key",
+        ]);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("mv accepts at most one destination argument"));
     }
 }

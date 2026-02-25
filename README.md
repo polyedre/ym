@@ -1,4 +1,4 @@
-# ym - YAML Search & Patch CLI Tool
+# ym - YAML Manipulator CLI Tool
 
 A fast, focused Unix-philosophy CLI tool for searching and patching YAML files.
 
@@ -43,4 +43,17 @@ cargo build --release
 
     $ # Copy value to a different file (with same key, destination key is optional and defaults to source key)
     $ ym cp tests/data/app-config.yaml:app.name tests/data/config-prod.yaml:
+    ```
+
+- use **mv** to move a value from one key to another (copies then deletes the source):
+
+    ```bash
+    $ # Move value to a different file with different key
+    $ ym mv tests/data/config-prod.yaml:database.primary.password tests/data/app-config.yaml:database.secondary.password
+
+    $ # Move value from source.key to destination.key (same file, destination file is optional and defaults to source file)
+    $ ym mv tests/data/app-config.yaml:database.primary.password database.replica.password
+
+    $ # Move value to a different file (with same key, destination key is optional and defaults to source key)
+    $ ym mv tests/data/app-config.yaml:app.name tests/data/config-prod.yaml:
     ```
