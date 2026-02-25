@@ -163,7 +163,7 @@ pub fn copy_value(
     // Set the value at destination
     set_value(&mut dest_yaml, dest_key, &value)?;
 
-    // Write destination file
+    // Write destination file (for cp, use standard serialization to handle nested keys properly)
     let dest_yaml_str = serde_yaml::to_string(&dest_yaml)
         .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
 
@@ -199,11 +199,11 @@ pub fn move_value(
     // Unset the source key
     unset_at_path(&mut source_yaml, source_key)?;
 
-    // Write the modified source file
+    // Write the modified source file (use standard serialization for nested keys)
     let source_yaml_str = serde_yaml::to_string(&source_yaml)
         .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
 
-    fs::write(source_file, source_yaml_str)
+    fs::write(source_file, &source_yaml_str)
         .map_err(|e| format!("Failed to write to '{}': {}", source_file, e))?;
 
     Ok(())
@@ -999,6 +999,107 @@ database:
         let result = move_value(&test_file, "nonexistent", &test_file, "dest");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_set_preserves_comments_and_empty_lines() {
+        use std::fs;
+
+        let test_dir = "test_set_preserve_comments";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let test_file = format!("{}/test.yaml", test_dir);
+        let original = "# Configuration file\napp_name: myapp\n\n# Debug settings\ndebug: false\n";
+        fs::write(&test_file, original).unwrap();
+
+        // Simulate the set command
+        let contents = fs::read_to_string(&test_file).unwrap();
+        let mut value = serde_yaml::from_str::<Value>(&contents).unwrap();
+
+        let mut updates = std::collections::HashMap::new();
+        updates.insert("debug".to_string(), "true".to_string());
+        set_values(&mut value, &updates).unwrap();
+
+        let updated =
+            crate::yaml_format_preserving::write_yaml_preserving_format(&contents, &value).unwrap();
+
+        // Comments and empty lines should be preserved
+        assert!(updated.contains("# Configuration file"));
+        assert!(updated.contains("# Debug settings"));
+        // The value should be updated
+        assert!(updated.contains("debug: true"));
+        // Original app_name should still be there
+        assert!(updated.contains("app_name: myapp"));
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_unset_preserves_comments_and_empty_lines() {
+        use std::fs;
+
+        let test_dir = "test_unset_preserve_comments";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let test_file = format!("{}/test.yaml", test_dir);
+        let original = "# Configuration\nkey1: value1\n\n# Comment\nkey2: value2\nkey3: value3\n";
+        fs::write(&test_file, original).unwrap();
+
+        // Simulate the unset command
+        let contents = fs::read_to_string(&test_file).unwrap();
+        let mut value = serde_yaml::from_str::<Value>(&contents).unwrap();
+
+        unset_values(&mut value, &["key2".to_string()]).unwrap();
+
+        let updated =
+            crate::yaml_format_preserving::write_yaml_preserving_format(&contents, &value).unwrap();
+
+        // Comments should be preserved
+        assert!(updated.contains("# Configuration"));
+        // key2 should be removed
+        assert!(!updated.contains("key2: value2"));
+        // Other keys should remain
+        assert!(updated.contains("key1: value1"));
+        assert!(updated.contains("key3: value3"));
+
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn test_set_multiple_values_preserves_formatting() {
+        use std::fs;
+
+        let test_dir = "test_set_multi_preserve";
+        let _ = fs::remove_dir_all(test_dir);
+        fs::create_dir(test_dir).unwrap();
+
+        let test_file = format!("{}/test.yaml", test_dir);
+        let original =
+            "# Server config\nhost: localhost\n\n# Port settings\nport: 8080\nssl: false\n";
+        fs::write(&test_file, original).unwrap();
+
+        let contents = fs::read_to_string(&test_file).unwrap();
+        let mut value = serde_yaml::from_str::<Value>(&contents).unwrap();
+
+        let mut updates = std::collections::HashMap::new();
+        updates.insert("host".to_string(), "0.0.0.0".to_string());
+        updates.insert("ssl".to_string(), "true".to_string());
+        set_values(&mut value, &updates).unwrap();
+
+        let updated =
+            crate::yaml_format_preserving::write_yaml_preserving_format(&contents, &value).unwrap();
+
+        // Comments should be preserved
+        assert!(updated.contains("# Server config"));
+        assert!(updated.contains("# Port settings"));
+        // Values should be updated
+        assert!(updated.contains("host: 0.0.0.0"));
+        assert!(updated.contains("ssl: true"));
+        assert!(updated.contains("port: 8080"));
 
         fs::remove_dir_all(test_dir).unwrap();
     }

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process;
 
 mod cli;
+mod yaml_format_preserving;
 mod yaml_ops;
 
 use cli::{parse_cli, Command};
@@ -80,8 +81,9 @@ fn execute_command(command: Command) -> Result<(), String> {
 
             yaml_ops::set_values(&mut value, &updates)?;
 
-            let updated_yaml = serde_yaml::to_string(&value)
-                .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+            let updated_yaml =
+                yaml_format_preserving::write_yaml_preserving_format(&contents, &value)
+                    .map_err(|e| format!("Failed to preserve YAML format: {}", e))?;
 
             fs::write(&file, updated_yaml)
                 .map_err(|e| format!("Failed to write file '{}': {}", file, e))?;
@@ -97,8 +99,9 @@ fn execute_command(command: Command) -> Result<(), String> {
 
             yaml_ops::unset_values(&mut value, &keys)?;
 
-            let updated_yaml = serde_yaml::to_string(&value)
-                .map_err(|e| format!("Failed to serialize YAML: {}", e))?;
+            let updated_yaml =
+                yaml_format_preserving::write_yaml_preserving_format(&contents, &value)
+                    .map_err(|e| format!("Failed to preserve YAML format: {}", e))?;
 
             fs::write(&file, updated_yaml)
                 .map_err(|e| format!("Failed to write file '{}': {}", file, e))?;
