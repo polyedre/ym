@@ -390,7 +390,7 @@ fn get_value_at_path(value: &Value, path: &YamlPath) -> AppResult<Option<Value>>
 pub fn copy_in_document(yaml_content: &str, source_key: &str, dest_key: &str) -> AppResult<String> {
     let source_yaml = parse_yaml_document(yaml_content, "from source document")?;
     let value = get_value(&source_yaml, source_key)?.ok_or_else(|| {
-        AppError::message(format!("Key '{}' not found in source document", source_key))
+        AppError::message(format!("Key '{source_key}' not found in source document"))
     })?;
 
     yaml_set(yaml_content, dest_key, value)
@@ -424,10 +424,7 @@ pub fn copy_value(
 
     let source_yaml = parse_yaml_document(&source_contents, &format!("from '{source_file}'"))?;
     let value = get_value(&source_yaml, source_key)?.ok_or_else(|| {
-        AppError::message(format!(
-            "Key '{}' not found in '{}'",
-            source_key, source_file
-        ))
+        AppError::message(format!("Key '{source_key}' not found in '{source_file}'"))
     })?;
     let updated = yaml_set(&dest_contents, dest_key, value)?;
 
@@ -453,10 +450,7 @@ pub fn move_value(
 
     let source_yaml = parse_yaml_document(&source_contents, &format!("from '{source_file}'"))?;
     let value = get_value(&source_yaml, source_key)?.ok_or_else(|| {
-        AppError::message(format!(
-            "Key '{}' not found in '{}'",
-            source_key, source_file
-        ))
+        AppError::message(format!("Key '{source_key}' not found in '{source_file}'"))
     })?;
 
     let dest_contents = if Path::new(dest_file).exists() {
@@ -477,16 +471,16 @@ pub fn move_value(
 pub fn format_result(key: &str, value: &Value, terminal_width: usize) -> String {
     match value {
         Value::Mapping(_) => format_mapping_result(key, value),
-        Value::String(s) => truncate_if_needed(&format!("{}: {}", key, s), terminal_width),
-        Value::Number(n) => truncate_if_needed(&format!("{}: {}", key, n), terminal_width),
-        Value::Bool(b) => truncate_if_needed(&format!("{}: {}", key, b), terminal_width),
-        Value::Null => format!("{}: null", key),
+        Value::String(s) => truncate_if_needed(&format!("{key}: {s}"), terminal_width),
+        Value::Number(n) => truncate_if_needed(&format!("{key}: {n}"), terminal_width),
+        Value::Bool(b) => truncate_if_needed(&format!("{key}: {b}"), terminal_width),
+        Value::Null => format!("{key}: null"),
         _ => {
             let val_str = serde_yaml::to_string(value)
                 .unwrap_or_else(|_| "<complex>".to_string())
                 .trim()
                 .to_string();
-            truncate_if_needed(&format!("{}: {}", key, val_str), terminal_width)
+            truncate_if_needed(&format!("{key}: {val_str}"), terminal_width)
         }
     }
 }
@@ -502,7 +496,7 @@ fn truncate_if_needed(text: &str, terminal_width: usize) -> String {
 fn format_mapping_result(key: &str, value: &Value) -> String {
     let yaml_str = match serde_yaml::to_string(value) {
         Ok(result) => result,
-        Err(_) => return format!("{}: <error>", key),
+        Err(_) => return format!("{key}: <error>"),
     };
 
     let indented = yaml_str
@@ -511,13 +505,13 @@ fn format_mapping_result(key: &str, value: &Value) -> String {
             if line.is_empty() {
                 line.to_string()
             } else {
-                format!("  {}", line)
+                format!("  {line}")
             }
         })
         .collect::<Vec<_>>()
         .join("\n");
 
-    format!("{}:\n{}", key, indented)
+    format!("{key}:\n{indented}")
 }
 
 #[cfg(test)]
