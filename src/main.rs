@@ -26,6 +26,14 @@ fn get_terminal_width() -> usize {
     80
 }
 
+fn no_matches_error() -> AppError {
+    AppError::message("No matches found")
+}
+
+fn is_no_matches_error(error: &AppError) -> bool {
+    matches!(error, AppError::Message(message) if message == "No matches found")
+}
+
 fn main() {
     let command = match parse_cli() {
         Ok(command) => command,
@@ -35,9 +43,15 @@ fn main() {
         }
     };
 
-    if let Err(error) = execute_command(command) {
-        eprintln!("Error: {error}");
-        process::exit(1);
+    match execute_command(command) {
+        Ok(()) => {}
+        Err(error) if is_no_matches_error(&error) => {
+            process::exit(2);
+        }
+        Err(error) => {
+            eprintln!("Error: {error}");
+            process::exit(1);
+        }
     }
 }
 
@@ -93,10 +107,21 @@ fn run_grep(pattern: &str, recursive: bool, files: &[String]) -> AppResult<()> {
     }
 
     let show_filename = should_show_filename(files);
+    let mut found_any = false;
+
     for file in files {
-        grep_path(Path::new(file), pattern, recursive, show_filename)?;
+        match grep_path(Path::new(file), pattern, recursive, show_filename) {
+            Ok(()) => found_any = true,
+            Err(error) if is_no_matches_error(&error) => {}
+            Err(error) => return Err(error),
+        }
     }
-    Ok(())
+
+    if found_any {
+        Ok(())
+    } else {
+        Err(no_matches_error())
+    }
 }
 
 fn should_show_filename(files: &[String]) -> bool {
@@ -149,7 +174,7 @@ fn grep_file(path: &Path, pattern: &str, show_filename: bool) -> AppResult<()> {
     let contents =
         fs::read_to_string(path).map_err(|error| AppError::read_file(display.as_ref(), error))?;
     let value = serde_yaml::from_str(&contents)
-        .map_err(|error| AppError::parse_yaml(format!("in '{}'", display), error))?;
+        .map_err(|error| AppError::parse_yaml(format!("in '{display}'"), error))?;
 
     print_grep_results(show_filename.then_some(display.as_ref()), pattern, &value)
 }
@@ -160,14 +185,18 @@ fn print_grep_results(
     value: &serde_yaml::Value,
 ) -> AppResult<()> {
     let results = yaml_ops::grep(value, pattern)?;
+    if results.is_empty() {
+        return Err(no_matches_error());
+    }
+
     let width = get_terminal_width();
 
     for (key, value) in results {
         let formatted = yaml_ops::format_result(&key, &value, width);
         if let Some(filename) = filename {
-            println!("{}:{}", filename, formatted);
+            println!("{filename}:{formatted}");
         } else {
-            println!("{}", formatted);
+            println!("{formatted}");
         }
     }
 
@@ -178,20 +207,32 @@ fn search_dir(dir: &Path, pattern: &str, show_filename: bool) -> AppResult<()> {
     let entries =
         fs::read_dir(dir).map_err(|error| AppError::read_dir(dir.display().to_string(), error))?;
 
+    let mut found_any = false;
+
     for entry in entries {
         let entry = entry.map_err(AppError::ReadDirEntry)?;
         let path = entry.path();
 
         if path.is_dir() {
-            search_dir(&path, pattern, show_filename)?;
+            match search_dir(&path, pattern, show_filename) {
+                Ok(()) => found_any = true,
+                Err(error) if is_no_matches_error(&error) => {}
+                Err(error) => return Err(error),
+            }
         } else if path.is_file() && should_process_file(&path) {
-            if let Err(error) = grep_file(&path, pattern, show_filename) {
-                eprintln!("Warning: {error}");
+            match grep_file(&path, pattern, show_filename) {
+                Ok(()) => found_any = true,
+                Err(error) if is_no_matches_error(&error) => {}
+                Err(error) => return Err(error),
             }
         }
     }
 
-    Ok(())
+    if found_any {
+        Ok(())
+    } else {
+        Err(no_matches_error())
+    }
 }
 
 fn should_process_file(path: &Path) -> bool {
