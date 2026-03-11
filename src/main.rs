@@ -11,6 +11,7 @@ mod yaml_ops;
 
 use cli::{parse_cli, Command};
 use error::{AppError, AppResult};
+use yaml_ops::GrepOutputMode;
 
 fn get_terminal_width() -> usize {
     if let Some(size) = termsize::get() {
@@ -60,8 +61,9 @@ fn execute_command(command: Command) -> AppResult<()> {
         Command::Grep {
             pattern,
             recursive,
+            full,
             files,
-        } => run_grep(&pattern, recursive, &files),
+        } => run_grep(&pattern, recursive, full, &files),
         Command::Set { file, updates } => {
             apply_file_update(&file, |contents| yaml_ops::set_values(contents, &updates))
         }
@@ -101,16 +103,28 @@ where
     Ok(())
 }
 
-fn run_grep(pattern: &str, recursive: bool, files: &[String]) -> AppResult<()> {
+fn run_grep(pattern: &str, recursive: bool, full: bool, files: &[String]) -> AppResult<()> {
+    let output_mode = if full {
+        GrepOutputMode::Full
+    } else {
+        GrepOutputMode::Inline
+    };
+
     if files.is_empty() {
-        return grep_stdin(pattern);
+        return grep_stdin(pattern, output_mode);
     }
 
-    let show_filename = should_show_filename(files);
+    let show_filename = should_show_filename(files, output_mode);
     let mut found_any = false;
 
     for file in files {
-        match grep_path(Path::new(file), pattern, recursive, show_filename) {
+        match grep_path(
+            Path::new(file),
+            pattern,
+            recursive,
+            show_filename,
+            output_mode,
+        ) {
             Ok(()) => found_any = true,
             Err(error) if is_no_matches_error(&error) => {}
             Err(error) => return Err(error),
@@ -124,7 +138,11 @@ fn run_grep(pattern: &str, recursive: bool, files: &[String]) -> AppResult<()> {
     }
 }
 
-fn should_show_filename(files: &[String]) -> bool {
+fn should_show_filename(files: &[String], output_mode: GrepOutputMode) -> bool {
+    if matches!(output_mode, GrepOutputMode::Full) {
+        return true;
+    }
+
     if files.len() != 1 {
         return true;
     }
@@ -132,7 +150,7 @@ fn should_show_filename(files: &[String]) -> bool {
     Path::new(&files[0]).is_dir()
 }
 
-fn grep_stdin(pattern: &str) -> AppResult<()> {
+fn grep_stdin(pattern: &str, output_mode: GrepOutputMode) -> AppResult<()> {
     let mut buffer = String::new();
     io::stdin()
         .read_to_string(&mut buffer)
@@ -144,17 +162,23 @@ fn grep_stdin(pattern: &str) -> AppResult<()> {
 
     let value =
         serde_yaml::from_str(&buffer).map_err(|error| AppError::parse_yaml("from stdin", error))?;
-    print_grep_results(None, pattern, &value)
+    print_grep_results(None, pattern, &value, output_mode)
 }
 
-fn grep_path(path: &Path, pattern: &str, recursive: bool, show_filename: bool) -> AppResult<()> {
+fn grep_path(
+    path: &Path,
+    pattern: &str,
+    recursive: bool,
+    show_filename: bool,
+    output_mode: GrepOutputMode,
+) -> AppResult<()> {
     if path.is_file() {
-        return grep_file(path, pattern, show_filename);
+        return grep_file(path, pattern, show_filename, output_mode);
     }
 
     if path.is_dir() {
         return if recursive {
-            search_dir(path, pattern, show_filename)
+            search_dir(path, pattern, show_filename, output_mode)
         } else {
             Err(AppError::message(format!(
                 "'{}' is a directory (use -R to search recursively)",
@@ -169,20 +193,31 @@ fn grep_path(path: &Path, pattern: &str, recursive: bool, show_filename: bool) -
     )))
 }
 
-fn grep_file(path: &Path, pattern: &str, show_filename: bool) -> AppResult<()> {
+fn grep_file(
+    path: &Path,
+    pattern: &str,
+    show_filename: bool,
+    output_mode: GrepOutputMode,
+) -> AppResult<()> {
     let display = path.to_string_lossy();
     let contents =
         fs::read_to_string(path).map_err(|error| AppError::read_file(display.as_ref(), error))?;
     let value = serde_yaml::from_str(&contents)
         .map_err(|error| AppError::parse_yaml(format!("in '{display}'"), error))?;
 
-    print_grep_results(show_filename.then_some(display.as_ref()), pattern, &value)
+    print_grep_results(
+        show_filename.then_some(display.as_ref()),
+        pattern,
+        &value,
+        output_mode,
+    )
 }
 
 fn print_grep_results(
     filename: Option<&str>,
     pattern: &str,
     value: &serde_yaml::Value,
+    output_mode: GrepOutputMode,
 ) -> AppResult<()> {
     let results = yaml_ops::grep(value, pattern)?;
     if results.is_empty() {
@@ -192,18 +227,34 @@ fn print_grep_results(
     let width = get_terminal_width();
 
     for (key, value) in results {
-        let formatted = yaml_ops::format_result(&key, &value, width);
-        if let Some(filename) = filename {
-            println!("{filename}:{formatted}");
-        } else {
-            println!("{formatted}");
-        }
+        print_grep_result(filename, &key, &value, width, output_mode);
     }
 
     Ok(())
 }
 
-fn search_dir(dir: &Path, pattern: &str, show_filename: bool) -> AppResult<()> {
+fn print_grep_result(
+    filename: Option<&str>,
+    key: &str,
+    value: &serde_yaml::Value,
+    width: usize,
+    output_mode: GrepOutputMode,
+) {
+    let formatted = yaml_ops::format_result(key, value, width, output_mode);
+
+    match (filename, output_mode) {
+        (Some(filename), GrepOutputMode::Inline) => println!("{filename}:{formatted}"),
+        (Some(filename), GrepOutputMode::Full) => println!("--- {filename} ---\n{formatted}"),
+        (None, _) => println!("{formatted}"),
+    }
+}
+
+fn search_dir(
+    dir: &Path,
+    pattern: &str,
+    show_filename: bool,
+    output_mode: GrepOutputMode,
+) -> AppResult<()> {
     let entries =
         fs::read_dir(dir).map_err(|error| AppError::read_dir(dir.display().to_string(), error))?;
 
@@ -214,13 +265,13 @@ fn search_dir(dir: &Path, pattern: &str, show_filename: bool) -> AppResult<()> {
         let path = entry.path();
 
         if path.is_dir() {
-            match search_dir(&path, pattern, show_filename) {
+            match search_dir(&path, pattern, show_filename, output_mode) {
                 Ok(()) => found_any = true,
                 Err(error) if is_no_matches_error(&error) => {}
                 Err(error) => return Err(error),
             }
         } else if path.is_file() && should_process_file(&path) {
-            match grep_file(&path, pattern, show_filename) {
+            match grep_file(&path, pattern, show_filename, output_mode) {
                 Ok(()) => found_any = true,
                 Err(error) if is_no_matches_error(&error) => {}
                 Err(error) => return Err(error),

@@ -11,6 +11,12 @@ use crate::path::{PathSegment, YamlPath};
 
 const PLACEHOLDER_KEY: &str = "__ym_placeholder__";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrepOutputMode {
+    Inline,
+    Full,
+}
+
 pub fn grep(value: &Value, pattern: &str) -> AppResult<Vec<(String, Value)>> {
     let regex = Regex::new(pattern)?;
     let mut results = Vec::new();
@@ -468,20 +474,18 @@ pub fn move_value(
     Ok(())
 }
 
-pub fn format_result(key: &str, value: &Value, terminal_width: usize) -> String {
-    match value {
-        Value::Mapping(_) => format_mapping_result(key, value),
-        Value::String(s) => truncate_if_needed(&format!("{key}: {s}"), terminal_width),
-        Value::Number(n) => truncate_if_needed(&format!("{key}: {n}"), terminal_width),
-        Value::Bool(b) => truncate_if_needed(&format!("{key}: {b}"), terminal_width),
-        Value::Null => format!("{key}: null"),
-        _ => {
-            let val_str = serde_yaml::to_string(value)
-                .unwrap_or_else(|_| "<complex>".to_string())
-                .trim()
-                .to_string();
-            truncate_if_needed(&format!("{key}: {val_str}"), terminal_width)
+pub fn format_result(
+    key: &str,
+    value: &Value,
+    terminal_width: usize,
+    mode: GrepOutputMode,
+) -> String {
+    match mode {
+        GrepOutputMode::Inline => {
+            let result = format!("{key}: {}", format_inline_value(value));
+            truncate_if_needed(&result, terminal_width)
         }
+        GrepOutputMode::Full => format_full_result(key, value),
     }
 }
 
@@ -493,25 +497,135 @@ fn truncate_if_needed(text: &str, terminal_width: usize) -> String {
     }
 }
 
-fn format_mapping_result(key: &str, value: &Value) -> String {
-    let yaml_str = match serde_yaml::to_string(value) {
-        Ok(result) => result,
-        Err(_) => return format!("{key}: <error>"),
-    };
+fn format_full_result(key: &str, value: &Value) -> String {
+    let mut rendered = render_yaml_with_indent(key, value, 0);
+    if rendered.ends_with('\n') {
+        rendered.pop();
+    }
+    rendered
+}
 
-    let indented = yaml_str
-        .lines()
-        .map(|line| {
-            if line.is_empty() {
-                line.to_string()
-            } else {
-                format!("  {line}")
+fn format_inline_value(value: &Value) -> String {
+    match value {
+        Value::Mapping(map) => {
+            let entries = map
+                .iter()
+                .map(|(key, val)| {
+                    format!("{}: {}", format_inline_key(key), format_inline_value(val))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{ {entries} }}")
+        }
+        Value::Sequence(seq) => {
+            let items = seq
+                .iter()
+                .map(format_inline_value)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{items}]")
+        }
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        _ => serde_yaml::to_string(value)
+            .unwrap_or_else(|_| "<complex>".to_string())
+            .trim()
+            .replace('\n', " "),
+    }
+}
+
+fn format_inline_key(key: &Value) -> String {
+    match key {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        _ => serde_yaml::to_string(key)
+            .unwrap_or_else(|_| "<key>".to_string())
+            .trim()
+            .replace('\n', " "),
+    }
+}
+
+fn render_yaml_with_indent(key: &str, value: &Value, indent: usize) -> String {
+    let prefix = "  ".repeat(indent);
+
+    match value {
+        Value::Mapping(map) => {
+            let mut output = format!("{prefix}{key}:\n");
+            for (child_key, child_value) in map {
+                output.push_str(&render_yaml_with_indent(
+                    &format_inline_key(child_key),
+                    child_value,
+                    indent + 1,
+                ));
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+            output
+        }
+        Value::Sequence(seq) => {
+            let mut output = format!("{prefix}{key}:\n");
+            for item in seq {
+                output.push_str(&render_sequence_item(item, indent + 1));
+            }
+            output
+        }
+        _ => format!("{prefix}{key}: {}\n", format_inline_value(value)),
+    }
+}
 
-    format!("{key}:\n{indented}")
+fn render_sequence_item(value: &Value, indent: usize) -> String {
+    let prefix = "  ".repeat(indent);
+
+    match value {
+        Value::Mapping(map) => {
+            let mut iter = map.iter();
+            if let Some((first_key, first_value)) = iter.next() {
+                let mut output = format!("{prefix}-");
+                match first_value {
+                    Value::Mapping(_) | Value::Sequence(_) => {
+                        output.push('\n');
+                        output.push_str(&render_yaml_with_indent(
+                            &format_inline_key(first_key),
+                            first_value,
+                            indent + 1,
+                        ));
+                    }
+                    _ => {
+                        output.push_str(&format!(
+                            " {}: {}\n",
+                            format_inline_key(first_key),
+                            format_inline_value(first_value)
+                        ));
+                    }
+                }
+
+                for (key, val) in iter {
+                    output.push_str(&render_yaml_with_indent(
+                        &format_inline_key(key),
+                        val,
+                        indent + 1,
+                    ));
+                }
+                output
+            } else {
+                format!("{prefix}- {{}}\n")
+            }
+        }
+        Value::Sequence(seq) => {
+            if seq.is_empty() {
+                format!("{prefix}- []\n")
+            } else {
+                let mut output = format!("{prefix}-\n");
+                for item in seq {
+                    output.push_str(&render_sequence_item(item, indent + 1));
+                }
+                output
+            }
+        }
+        _ => format!("{prefix}- {}\n", format_inline_value(value)),
+    }
 }
 
 #[cfg(test)]
@@ -527,7 +641,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = format!("{}_{}_{}", name, std::process::id(), unique);
+        let dir = format!("{name}_{}_{}", std::process::id(), unique);
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
         dir
@@ -695,8 +809,8 @@ mod tests {
     #[test]
     fn test_copy_value_handles_scalars_and_mappings() {
         let test_dir = temp_test_dir("test_copy_value");
-        let source_file = format!("{}/source.yaml", test_dir);
-        let dest_file = format!("{}/dest.yaml", test_dir);
+        let source_file = format!("{test_dir}/source.yaml");
+        let dest_file = format!("{test_dir}/dest.yaml");
 
         fs::write(
             &source_file,
@@ -719,8 +833,8 @@ mod tests {
     #[test]
     fn test_move_value_updates_destination_and_removes_source() {
         let test_dir = temp_test_dir("test_move_value");
-        let source_file = format!("{}/source.yaml", test_dir);
-        let dest_file = format!("{}/dest.yaml", test_dir);
+        let source_file = format!("{test_dir}/source.yaml");
+        let dest_file = format!("{test_dir}/dest.yaml");
 
         fs::write(
             &source_file,
@@ -748,22 +862,97 @@ mod tests {
     #[test]
     fn test_format_string_value() {
         let value = Value::String("hello".to_string());
-        assert_eq!(format_result("message", &value, 80), "message: hello");
+        assert_eq!(
+            format_result("message", &value, 80, GrepOutputMode::Inline),
+            "message: hello"
+        );
     }
 
     #[test]
-    fn test_format_mapping_value() {
+    fn test_format_number_value() {
+        let value = Value::Number(42.into());
+        assert_eq!(
+            format_result("count", &value, 80, GrepOutputMode::Inline),
+            "count: 42"
+        );
+    }
+
+    #[test]
+    fn test_format_boolean_true() {
+        let value = Value::Bool(true);
+        assert_eq!(
+            format_result("enabled", &value, 80, GrepOutputMode::Inline),
+            "enabled: true"
+        );
+    }
+
+    #[test]
+    fn test_format_boolean_false() {
+        let value = Value::Bool(false);
+        assert_eq!(
+            format_result("enabled", &value, 80, GrepOutputMode::Inline),
+            "enabled: false"
+        );
+    }
+
+    #[test]
+    fn test_format_null_value() {
+        let value = Value::Null;
+        assert_eq!(
+            format_result("empty", &value, 80, GrepOutputMode::Inline),
+            "empty: null"
+        );
+    }
+
+    #[test]
+    fn test_format_mapping_value_inline() {
         let value = parse_yaml("host: localhost\nport: 5432");
-        let result = format_result("database", &value, 80);
-        assert!(result.starts_with("database:\n"));
-        assert!(result.contains("host"));
+        let result = format_result("database", &value, 80, GrepOutputMode::Inline);
+        assert_eq!(result, "database: { host: localhost, port: 5432 }");
+    }
+
+    #[test]
+    fn test_format_mapping_value_full() {
+        let value = parse_yaml("host: localhost\nport: 5432");
+        let result = format_result("database", &value, 80, GrepOutputMode::Full);
+        assert_eq!(result, "database:\n  host: localhost\n  port: 5432");
     }
 
     #[test]
     fn test_format_truncates_long_string() {
         let long_string = "a".repeat(100);
         let value = Value::String(long_string);
-        let result = format_result("key", &value, 20);
+        let result = format_result("key", &value, 20, GrepOutputMode::Inline);
         assert!(result.ends_with("..."));
+        assert!(result.len() <= 23);
+    }
+
+    #[test]
+    fn test_format_does_not_truncate_short_string() {
+        let value = Value::String("short".to_string());
+        let result = format_result("key", &value, 80, GrepOutputMode::Inline);
+        assert_eq!(result, "key: short");
+        assert!(!result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_format_sequence_inline() {
+        let value = parse_yaml("- item1\n- item2\n- item3");
+        let result = format_result("items", &value, 80, GrepOutputMode::Inline);
+        assert_eq!(result, "items: [item1, item2, item3]");
+    }
+
+    #[test]
+    fn test_format_nested_mapping_inline() {
+        let value = parse_yaml("subkey1: true\nsubkey2: false");
+        let result = format_result("key", &value, 80, GrepOutputMode::Inline);
+        assert_eq!(result, "key: { subkey1: true, subkey2: false }");
+    }
+
+    #[test]
+    fn test_format_nested_mapping_full() {
+        let value = parse_yaml("subkey1: true\nsubkey2: false");
+        let result = format_result("key", &value, 80, GrepOutputMode::Full);
+        assert_eq!(result, "key:\n  subkey1: true\n  subkey2: false");
     }
 }
