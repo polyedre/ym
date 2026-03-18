@@ -18,8 +18,9 @@ cargo build --release
 - use **grep** to look for a specific key:
 
     ```bash
-    $ # ym grep [OPTIONS] <PATTERN> [FILES]...
-    $ ym grep -R 'database\..*\.password' tests/data/
+    $ # ym grep [--full] <PATTERN> [FILES or DIRECTORIES]...
+    $ # Directories are searched recursively. Defaults to current directory if no target is given.
+    $ ym grep 'database\..*\.password' tests/data/
     tests/data/app-config.yaml:database.primary.password: super_secret_123
     tests/data/app-config.yaml:database.replica.password: super_secret_123
     tests/data/config-dev.yaml:database.primary.password: dev_password

@@ -60,10 +60,9 @@ fn execute_command(command: Command) -> AppResult<()> {
     match command {
         Command::Grep {
             pattern,
-            recursive,
             full,
             files,
-        } => run_grep(&pattern, recursive, full, &files),
+        } => run_grep(&pattern, full, &files),
         Command::Set { file, updates } => {
             apply_file_update(&file, |contents| yaml_ops::set_values(contents, &updates))
         }
@@ -103,7 +102,7 @@ where
     Ok(())
 }
 
-fn run_grep(pattern: &str, recursive: bool, full: bool, files: &[String]) -> AppResult<()> {
+fn run_grep(pattern: &str, full: bool, files: &[String]) -> AppResult<()> {
     let output_mode = if full {
         GrepOutputMode::Full
     } else {
@@ -111,20 +110,22 @@ fn run_grep(pattern: &str, recursive: bool, full: bool, files: &[String]) -> App
     };
 
     if files.is_empty() {
+        if atty::is(atty::Stream::Stdin) {
+            let files = vec![".".to_string()];
+            return run_grep_files(pattern, &files, output_mode);
+        }
         return grep_stdin(pattern, output_mode);
     }
 
+    run_grep_files(pattern, files, output_mode)
+}
+
+fn run_grep_files(pattern: &str, files: &[String], output_mode: GrepOutputMode) -> AppResult<()> {
     let show_filename = should_show_filename(files, output_mode);
     let mut found_any = false;
 
     for file in files {
-        match grep_path(
-            Path::new(file),
-            pattern,
-            recursive,
-            show_filename,
-            output_mode,
-        ) {
+        match grep_path(Path::new(file), pattern, show_filename, output_mode) {
             Ok(()) => found_any = true,
             Err(error) if is_no_matches_error(&error) => {}
             Err(error) => return Err(error),
@@ -168,7 +169,6 @@ fn grep_stdin(pattern: &str, output_mode: GrepOutputMode) -> AppResult<()> {
 fn grep_path(
     path: &Path,
     pattern: &str,
-    recursive: bool,
     show_filename: bool,
     output_mode: GrepOutputMode,
 ) -> AppResult<()> {
@@ -177,14 +177,7 @@ fn grep_path(
     }
 
     if path.is_dir() {
-        return if recursive {
-            search_dir(path, pattern, show_filename, output_mode)
-        } else {
-            Err(AppError::message(format!(
-                "'{}' is a directory (use -R to search recursively)",
-                path.display()
-            )))
-        };
+        return search_dir(path, pattern, show_filename, output_mode);
     }
 
     Err(AppError::message(format!(

@@ -6,7 +6,6 @@ use crate::error::{AppError, AppResult};
 pub enum Command {
     Grep {
         pattern: String,
-        recursive: bool,
         full: bool,
         files: Vec<String>,
     },
@@ -84,10 +83,9 @@ fn command_from_cli(cli: Cli) -> AppResult<Command> {
 fn command_from_parsed(command: Commands) -> AppResult<Command> {
     match command {
         Commands::Grep { args } => {
-            let (pattern, recursive, full, files) = parse_grep_args(args)?;
+            let (pattern, full, files) = parse_grep_args(args)?;
             Ok(Command::Grep {
                 pattern,
-                recursive,
                 full,
                 files,
             })
@@ -130,19 +128,17 @@ fn command_from_parsed(command: Commands) -> AppResult<Command> {
     }
 }
 
-fn parse_grep_args(args: Vec<String>) -> AppResult<(String, bool, bool, Vec<String>)> {
+fn parse_grep_args(args: Vec<String>) -> AppResult<(String, bool, Vec<String>)> {
     if args.is_empty() {
         return Err(AppError::cli("grep requires at least a pattern"));
     }
 
     let mut pattern = None;
-    let mut recursive = false;
     let mut full = false;
     let mut files = Vec::new();
 
     for arg in args {
         match arg.as_str() {
-            "-R" => recursive = true,
             "--full" => full = true,
             _ if pattern.is_none() => pattern = Some(arg),
             _ => files.push(arg),
@@ -150,7 +146,7 @@ fn parse_grep_args(args: Vec<String>) -> AppResult<(String, bool, bool, Vec<Stri
     }
 
     pattern
-        .map(|pattern| (pattern, recursive, full, files))
+        .map(|pattern| (pattern, full, files))
         .ok_or_else(|| AppError::cli("grep requires a pattern"))
 }
 
@@ -270,24 +266,8 @@ mod tests {
             cmd,
             Command::Grep {
                 pattern: "pattern".to_string(),
-                recursive: false,
                 full: false,
                 files: vec!["file.yaml".to_string()],
-            }
-        );
-    }
-
-    #[test]
-    fn test_parse_grep_with_recursive_flag() {
-        let cmd = test_with_args(vec!["ym", "grep", "-R", "pattern", "dir"]).unwrap();
-
-        assert_eq!(
-            cmd,
-            Command::Grep {
-                pattern: "pattern".to_string(),
-                recursive: true,
-                full: false,
-                files: vec!["dir".to_string()],
             }
         );
     }
@@ -308,7 +288,6 @@ mod tests {
             cmd,
             Command::Grep {
                 pattern: "pattern".to_string(),
-                recursive: false,
                 full: false,
                 files: vec![
                     "file1.yaml".to_string(),
@@ -325,11 +304,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_grep_recursive_no_pattern_error() {
-        assert!(test_with_args(vec!["ym", "grep", "-R"]).is_err());
-    }
-
-    #[test]
     fn test_parse_grep_no_files_allowed() {
         let cmd = test_with_args(vec!["ym", "grep", "pattern"]).unwrap();
 
@@ -337,7 +311,6 @@ mod tests {
             cmd,
             Command::Grep {
                 pattern: "pattern".to_string(),
-                recursive: false,
                 full: false,
                 files: Vec::new(),
             }
@@ -352,7 +325,6 @@ mod tests {
             cmd,
             Command::Grep {
                 pattern: "pattern".to_string(),
-                recursive: false,
                 full: true,
                 files: vec!["file.yaml".to_string()],
             }
@@ -360,69 +332,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_grep_with_flags_after_pattern() {
-        let cmd = test_with_args(vec!["ym", "grep", "pattern", ".", "-R"]).unwrap();
+    fn test_parse_grep_with_flag_after_pattern() {
+        let cmd = test_with_args(vec!["ym", "grep", "pattern", "file.yaml", "--full"]).unwrap();
 
         assert_eq!(
             cmd,
             Command::Grep {
                 pattern: "pattern".to_string(),
-                recursive: true,
-                full: false,
-                files: vec![".".to_string()],
-            }
-        );
-    }
-
-    #[test]
-    fn test_parse_grep_with_flags_between_args() {
-        let cmd = test_with_args(vec!["ym", "grep", "pattern", "-R", "file.yaml"]).unwrap();
-
-        assert_eq!(
-            cmd,
-            Command::Grep {
-                pattern: "pattern".to_string(),
-                recursive: true,
-                full: false,
-                files: vec!["file.yaml".to_string()],
-            }
-        );
-    }
-
-    #[test]
-    fn test_parse_grep_with_multiple_flags_after_args() {
-        let cmd = test_with_args(vec![
-            "ym",
-            "grep",
-            "pattern",
-            "file1.yaml",
-            "file2.yaml",
-            "-R",
-            "--full",
-        ])
-        .unwrap();
-
-        assert_eq!(
-            cmd,
-            Command::Grep {
-                pattern: "pattern".to_string(),
-                recursive: true,
-                full: true,
-                files: vec!["file1.yaml".to_string(), "file2.yaml".to_string()],
-            }
-        );
-    }
-
-    #[test]
-    fn test_parse_grep_with_flags_mixed_positions() {
-        let cmd =
-            test_with_args(vec!["ym", "grep", "-R", "pattern", "--full", "file.yaml"]).unwrap();
-
-        assert_eq!(
-            cmd,
-            Command::Grep {
-                pattern: "pattern".to_string(),
-                recursive: true,
                 full: true,
                 files: vec!["file.yaml".to_string()],
             }
@@ -430,14 +346,27 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_grep_only_pattern_with_flags() {
-        let cmd = test_with_args(vec!["ym", "grep", "pattern", "-R", "--full"]).unwrap();
+    fn test_parse_grep_with_flag_between_args() {
+        let cmd = test_with_args(vec!["ym", "grep", "pattern", "--full", "file.yaml"]).unwrap();
 
         assert_eq!(
             cmd,
             Command::Grep {
                 pattern: "pattern".to_string(),
-                recursive: true,
+                full: true,
+                files: vec!["file.yaml".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_grep_only_pattern_with_full() {
+        let cmd = test_with_args(vec!["ym", "grep", "pattern", "--full"]).unwrap();
+
+        assert_eq!(
+            cmd,
+            Command::Grep {
+                pattern: "pattern".to_string(),
                 full: true,
                 files: Vec::new(),
             }
